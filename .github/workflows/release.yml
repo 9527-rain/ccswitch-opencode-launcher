@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "CCSwitch OpenCode Launcher $TAG" \
+            --generate-notes \
+            --notes "CCSwitch 切换模型后，自动同步 OpenCode。\n\n本版本支持 Windows、macOS 和 Linux，自动读取 provider、API 地址、模型与推理强度，并使用隔离配置启动 OpenCode。"
