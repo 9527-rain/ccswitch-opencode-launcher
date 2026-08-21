@@ -1,6 +1,48 @@
 # CCSwitch OpenCode Launcher
 
-Launch OpenCode with the provider currently selected in [CCSwitch](https://github.com/farion1231/cc-switch). The launcher re-syncs on every start, so switching providers in CCSwitch takes effect the next time you run `opencode-ccswitch`.
+[![CI](https://github.com/9527-rain/ccswitch-opencode-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/9527-rain/ccswitch-opencode-launcher/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/9527-rain/ccswitch-opencode-launcher?display_name=tag)](https://github.com/9527-rain/ccswitch-opencode-launcher/releases/latest)
+[![License](https://img.shields.io/github/license/9527-rain/ccswitch-opencode-launcher)](LICENSE)
+
+**CCSwitch 切换模型后，OpenCode 下次启动自动同步。**
+
+不用复制 API Key，不用手改 OpenCode 配置。每次运行 `opencode-ccswitch`，它都会读取 CCSwitch 当前选中的 provider、模型和推理强度，再启动一个隔离配置的 OpenCode 进程。
+
+![Demo](assets/demo.gif)
+
+## Quick start
+
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main/install.ps1 | iex
+opencode-ccswitch
+```
+
+### macOS / Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main/install.sh | sh
+opencode-ccswitch
+```
+
+安装后，在 CCSwitch 中切换 provider，再重新运行 `opencode-ccswitch` 即可同步。
+
+## Supported platforms
+
+| Platform | Launcher | Requirements |
+| --- | --- | --- |
+| Windows 10+ | PowerShell | PowerShell 5.1+, CCSwitch, OpenCode, `sqlite3.exe` |
+| macOS | Python | Python 3.9+, CCSwitch, OpenCode |
+| Linux | Python | Python 3.9+, CCSwitch, OpenCode |
+
+## Before / after
+
+| 手动配置 | 使用本启动器 |
+| --- | --- |
+| CCSwitch 切换后，复制 Key、地址和模型 | CCSwitch 切换后直接启动 |
+| 修改 OpenCode 配置文件 | 自动生成临时配置 |
+| 担心 Key 被写入项目或 `auth.json` | Key 只传给当前 OpenCode 子进程 |
 
 ## What it does
 
@@ -27,7 +69,7 @@ Launch OpenCode with the provider currently selected in [CCSwitch](https://githu
 
 CCSwitch stores its data under `%USERPROFILE%\\.cc-switch` on Windows and `~/.cc-switch` on Unix-like systems by default.
 
-## Install
+## Install (from a clone)
 
 ### Windows (PowerShell)
 
