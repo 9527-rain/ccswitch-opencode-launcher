@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.0
+
+- Preserve OpenCode global/project configuration by generating only the provider/model override layer.
+- Add `doctor --json`, `--version`, `update`, and `uninstall` maintenance commands.
+- Include the versioned installer inside release archives so installed launchers can self-update.
+- Extend diagnostics with runtime versions, paths, dependency status, and redacted API endpoint details.
+- Run Windows PowerShell and Unix shell checks in CI and publish SHA256-checksummed archives.
+
 ## v0.2.1
 
 - Reject API URLs containing embedded credentials, query parameters, or fragments.

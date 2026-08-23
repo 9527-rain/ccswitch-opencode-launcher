@@ -18,8 +18,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           mkdir -p dist/windows dist/unix
-          cp opencode-ccswitch.ps1 opencode-ccswitch.cmd dist/windows/
-          cp opencode-ccswitch.py opencode-ccswitch dist/unix/
+          cp opencode-ccswitch.ps1 opencode-ccswitch.cmd install.ps1 dist/windows/
+          cp opencode-ccswitch.py opencode-ccswitch install.sh dist/unix/
           (cd dist/windows && zip -q -r "../ccswitch-opencode-launcher-${TAG}-windows.zip" .)
           (cd dist/unix && tar -czf "../ccswitch-opencode-launcher-${TAG}-unix.tar.gz" .)
           cd dist

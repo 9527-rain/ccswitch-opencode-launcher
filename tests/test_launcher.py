@@ -127,6 +127,65 @@ class LauncherTests(unittest.TestCase):
             self.assertIn('"model": "ccswitch/demo"', output.getvalue())
             self.assertNotIn("hidden", output.getvalue())
 
+    def test_generated_config_only_contains_launcher_owned_layer(self):
+        runtime = {
+            "config": {"options": {"baseURL": "https://api.example.test/v1", "organization": "demo"}},
+            "npm": "@ai-sdk/openai-compatible",
+            "base_url": "https://api.example.test/v1",
+            "model_id": "demo-model",
+            "models": {"demo-model": {"name": "Demo"}},
+        }
+        generated = opencode_ccswitch.generated_config(runtime, "Provider")
+        self.assertEqual(generated["model"], "ccswitch/demo-model")
+        self.assertIn("provider", generated)
+        self.assertNotIn("mcp", generated)
+        self.assertNotIn("permission", generated)
+        self.assertNotIn("plugin", generated)
+
+    def test_doctor_json_is_redacted_and_versioned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db_path = root / "cc-switch.db"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute("CREATE TABLE providers (id TEXT, name TEXT, settings_config TEXT, meta TEXT, website_url TEXT, app_type TEXT, is_current INTEGER)")
+                connection.execute(
+                    "INSERT INTO providers VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    ("p1", "Doctor", json.dumps({"auth": {"OPENAI_API_KEY": "secret"}, "options": {"baseURL": "https://api.example.test/v1"}, "model": "demo"}), "{}", "https://example.test", "opencode", 1),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            old_home = os.environ.get("CCSWITCH_HOME")
+            old_db = os.environ.get("CCSWITCH_DB")
+            os.environ["CCSWITCH_HOME"] = str(root)
+            os.environ["CCSWITCH_DB"] = str(db_path)
+            output = StringIO()
+            try:
+                with redirect_stdout(output):
+                    result = opencode_ccswitch.print_doctor(json_output=True)
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCSWITCH_HOME", None)
+                else:
+                    os.environ["CCSWITCH_HOME"] = old_home
+                if old_db is None:
+                    os.environ.pop("CCSWITCH_DB", None)
+                else:
+                    os.environ["CCSWITCH_DB"] = old_db
+            details = json.loads(output.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(details["launcher_version"], opencode_ccswitch.__version__)
+            self.assertEqual(details["provider"]["api_key"], "configured")
+            self.assertNotIn("secret", output.getvalue())
+
+    def test_version_command(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            result = opencode_ccswitch.main(["--version"])
+        self.assertEqual(result, 0)
+        self.assertIn(opencode_ccswitch.__version__, output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

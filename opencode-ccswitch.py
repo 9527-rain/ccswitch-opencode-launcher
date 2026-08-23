@@ -16,6 +16,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+__version__ = "0.3.0"
+
 
 def value(obj: Any, name: str, default: Any = None) -> Any:
     return obj.get(name, default) if isinstance(obj, dict) else default
@@ -226,7 +228,22 @@ def validate_discovery_mode(mode: str) -> None:
         raise RuntimeError("CCSWITCH_MODEL_DISCOVERY must be never, best-effort, or required")
 
 
-def print_doctor() -> int:
+def generated_config(runtime: dict[str, Any], provider_name: str) -> dict[str, Any]:
+    """Build only the layer owned by this launcher.
+
+    OpenCode merges OPENCODE_CONFIG with its normal global and project config.
+    Keeping this document to provider/model keys avoids copying user MCP, plugin,
+    permission, or agent settings into a temporary file.
+    """
+    options = safe_options(runtime["config"], runtime["base_url"])
+    return {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {"ccswitch": {"npm": runtime["npm"], "name": f"CCSwitch: {provider_name}", "options": options, "models": runtime["models"]}},
+        "model": f"ccswitch/{runtime['model_id']}",
+    }
+
+
+def doctor_data() -> dict[str, Any]:
     global DB_PATH
     cc_root = Path(os.environ.get("CCSWITCH_HOME", Path.home() / ".cc-switch"))
     DB_PATH = Path(os.environ.get("CCSWITCH_DB", cc_root / "cc-switch.db"))
@@ -234,19 +251,65 @@ def print_doctor() -> int:
     app_type, row = current_provider(settings, os.environ.get("CCSWITCH_APP_TYPE", ""), os.environ.get("CCSWITCH_PROVIDER_ID"))
     runtime = runtime_for(app_type, row, require_key=False)
     validate_discovery_mode(os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never"))
-    print(f"provider: {row['name']}")
-    print(f"app type: {app_type}")
-    print(f"model: {runtime['model_id']}")
-    print(f"api base URL: {display_base_url(runtime['base_url'])}")
-    print(f"api key: {'configured' if runtime['api_key'] else 'missing'}")
-    print(f"opencode: {'found' if shutil.which('opencode') else 'missing'}")
-    print(f"model discovery: {os.environ.get('CCSWITCH_MODEL_DISCOVERY', 'never')}")
+    executable = shutil.which("opencode")
+    return {
+        "launcher_version": __version__,
+        "platform": sys.platform,
+        "python": {"version": sys.version.split()[0], "supported": sys.version_info >= (3, 9)},
+        "ccswitch": {"home": str(cc_root), "database": str(DB_PATH)},
+        "provider": {
+            "name": row["name"],
+            "app_type": app_type,
+            "model": runtime["model_id"],
+            "api_base_url": display_base_url(runtime["base_url"]),
+            "api_key": "configured" if runtime["api_key"] else "missing",
+        },
+        "opencode": {"status": "found" if executable else "missing", "path": executable},
+        "model_discovery": os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never"),
+    }
+
+
+def print_doctor(json_output: bool = False) -> int:
+    details = doctor_data()
+    if json_output:
+        print(json.dumps(details, ensure_ascii=False, indent=2))
+        return 0
+    provider = details["provider"]
+    print(f"launcher version: {details['launcher_version']}")
+    print(f"provider: {provider['name']}")
+    print(f"app type: {provider['app_type']}")
+    print(f"model: {provider['model']}")
+    print(f"api base URL: {provider['api_base_url']}")
+    print(f"api key: {provider['api_key']}")
+    print(f"python: {details['python']['version']} ({'supported' if details['python']['supported'] else 'unsupported'})")
+    print(f"opencode: {details['opencode']['status']}")
+    print(f"model discovery: {details['model_discovery']}")
     return 0
 
 
+def run_maintenance(action: str) -> int:
+    installer = Path(__file__).with_name("install.sh")
+    if not installer.exists():
+        raise RuntimeError("Maintenance requires install.sh beside the launcher. Reinstall from a GitHub Release.")
+    environment = os.environ.copy()
+    environment["OPENCODE_CCSWITCH_INSTALL_DIR"] = str(installer.parent)
+    arguments = ["sh", str(installer), "--latest" if action == "update" else "--uninstall"]
+    return subprocess.call(arguments, env=environment)
+
+
 def main(argv: list[str]) -> int:
+    if sys.version_info < (3, 9):
+        raise RuntimeError("Python 3.9 or later is required")
+    if argv == ["--version"]:
+        print(f"CCSwitch OpenCode Launcher v{__version__}")
+        return 0
+    if argv in (["update"], ["uninstall"]):
+        return run_maintenance(argv[0])
     if argv and argv[0] in {"doctor", "--doctor"}:
-        return print_doctor()
+        invalid_options = set(argv[1:]) - {"--json"}
+        if invalid_options:
+            raise RuntimeError("doctor accepts only --json")
+        return print_doctor(json_output="--json" in argv[1:])
     dry_run = "--dry-run" in argv
     forwarded_args = [arg for arg in argv if arg != "--dry-run"]
     global DB_PATH
@@ -262,12 +325,7 @@ def main(argv: list[str]) -> int:
     else:
         discover_models(runtime)
 
-    options = safe_options(runtime["config"], runtime["base_url"])
-    generated = {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {"ccswitch": {"npm": runtime["npm"], "name": f"CCSwitch: {row['name']}", "options": options, "models": runtime["models"]}},
-        "model": f"ccswitch/{runtime['model_id']}",
-    }
+    generated = generated_config(runtime, str(row["name"]))
     if dry_run:
         print(json.dumps(generated, ensure_ascii=False, indent=2))
         return 0
@@ -290,7 +348,11 @@ def main(argv: list[str]) -> int:
         env["CCSWITCH_OPENCODE_API_KEY"] = runtime["api_key"]
         env["OPENCODE_CONFIG"] = str(config_path)
         print(f"CCSwitch [{app_type}] provider: {row['name']} | model: {runtime['model_id']}", flush=True)
-        return subprocess.call([executable, *forwarded_args], env=env)
+        command = [executable]
+        if not any(arg == "--model" or arg.startswith("--model=") for arg in forwarded_args):
+            command.extend(["--model", f"ccswitch/{runtime['model_id']}"])
+        command.extend(forwarded_args)
+        return subprocess.call(command, env=env)
     finally:
         if temporary:
             try:

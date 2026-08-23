@@ -1,6 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+case "${1:-}" in
+  update)
+    exec env OPENCODE_CCSWITCH_INSTALL_DIR="$SCRIPT_DIR" sh "$SCRIPT_DIR/install.sh" --latest
+    ;;
+  uninstall)
+    exec env OPENCODE_CCSWITCH_INSTALL_DIR="$SCRIPT_DIR" sh "$SCRIPT_DIR/install.sh" --uninstall
+    ;;
+esac
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
 elif command -v python >/dev/null 2>&1; then

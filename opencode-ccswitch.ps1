@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$LauncherVersion = "0.3.0"
 
 function Get-SqliteExecutable {
   if ($env:CCSWITCH_SQLITE) {
@@ -240,6 +241,25 @@ function Assert-DiscoveryMode {
   }
 }
 
+function Invoke-Maintenance([string]$Action) {
+  $installer = Join-Path $PSScriptRoot "install.ps1"
+  if (-not (Test-Path -LiteralPath $installer)) { throw "Maintenance requires install.ps1 beside the launcher. Reinstall from a GitHub Release." }
+  if ($Action -eq "update") {
+    & $installer -InstallDir $PSScriptRoot -Latest
+  } else {
+    & $installer -InstallDir $PSScriptRoot -Uninstall
+  }
+  exit $LASTEXITCODE
+}
+
+if ($OpenCodeArgs.Count -eq 1 -and $OpenCodeArgs[0] -eq "--version") {
+  Write-Output "CCSwitch OpenCode Launcher v$LauncherVersion"
+  exit 0
+}
+if ($OpenCodeArgs.Count -eq 1 -and $OpenCodeArgs[0] -in @("update", "uninstall")) {
+  Invoke-Maintenance $OpenCodeArgs[0]
+}
+
 $ccRoot = if ($env:CCSWITCH_HOME) { $env:CCSWITCH_HOME } else { Join-Path $env:USERPROFILE ".cc-switch" }
 $dbPath = if ($env:CCSWITCH_DB) { $env:CCSWITCH_DB } else { Join-Path $ccRoot "cc-switch.db" }
 $settingsPath = Join-Path $ccRoot "settings.json"
@@ -253,13 +273,38 @@ $runtime = Get-ProviderRuntime $selection
 $dryRun = $OpenCodeArgs -contains "--dry-run"
 Assert-DiscoveryMode
 if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor")) {
-  Write-Host "provider: $($selection.Row.name)"
-  Write-Host "app type: $($selection.AppType)"
-  Write-Host "model: $($runtime.ModelId)"
-  Write-Host "api base URL: $(Get-DisplayBaseUrl $runtime.BaseUrl)"
-  Write-Host "api key: $(if ($runtime.ApiKey) { 'configured' } else { 'missing' })"
-  Write-Host "opencode: $(if (Get-Command opencode -ErrorAction SilentlyContinue) { 'found' } else { 'missing' })"
-  Write-Host "model discovery: $(if ($env:CCSWITCH_MODEL_DISCOVERY) { $env:CCSWITCH_MODEL_DISCOVERY } else { 'never' })"
+  $doctorArgs = @($OpenCodeArgs | Select-Object -Skip 1)
+  if (@($doctorArgs | Where-Object { $_ -ne "--json" }).Count -gt 0) { throw "doctor accepts only --json" }
+  $openCodeCommand = Get-Command opencode -ErrorAction SilentlyContinue
+  $doctor = [ordered]@{
+    launcher_version = $LauncherVersion
+    platform = [Environment]::OSVersion.Platform.ToString()
+    powershell = [ordered]@{ version = $PSVersionTable.PSVersion.ToString(); supported = $PSVersionTable.PSVersion -ge [version]"5.1" }
+    ccswitch = [ordered]@{ home = $ccRoot; database = $dbPath; sqlite = $sqlite }
+    provider = [ordered]@{
+      name = $selection.Row.name
+      app_type = $selection.AppType
+      model = $runtime.ModelId
+      api_base_url = Get-DisplayBaseUrl $runtime.BaseUrl
+      api_key = if ($runtime.ApiKey) { "configured" } else { "missing" }
+    }
+    opencode = [ordered]@{ status = if ($openCodeCommand) { "found" } else { "missing" }; path = if ($openCodeCommand) { $openCodeCommand.Source } else { $null } }
+    model_discovery = if ($env:CCSWITCH_MODEL_DISCOVERY) { $env:CCSWITCH_MODEL_DISCOVERY } else { "never" }
+  }
+  if ($doctorArgs -contains "--json") {
+    $doctor | ConvertTo-Json -Depth 10
+    exit 0
+  }
+  Write-Host "launcher version: $($doctor.launcher_version)"
+  Write-Host "provider: $($doctor.provider.name)"
+  Write-Host "app type: $($doctor.provider.app_type)"
+  Write-Host "model: $($doctor.provider.model)"
+  Write-Host "api base URL: $($doctor.provider.api_base_url)"
+  Write-Host "api key: $($doctor.provider.api_key)"
+  Write-Host "PowerShell: $($doctor.powershell.version) ($(if ($doctor.powershell.supported) { 'supported' } else { 'unsupported' }))"
+  Write-Host "sqlite3: $($doctor.ccswitch.sqlite)"
+  Write-Host "opencode: $($doctor.opencode.status)"
+  Write-Host "model discovery: $($doctor.model_discovery)"
   exit 0
 }
 if (-not $runtime.ApiKey -and -not $dryRun) { throw "The active CCSwitch provider has no API key." }
@@ -298,7 +343,12 @@ try {
   $previousConfig = $env:OPENCODE_CONFIG
   $env:CCSWITCH_OPENCODE_API_KEY = $runtime.ApiKey
   $env:OPENCODE_CONFIG = $generatedConfig
-  & opencode @($OpenCodeArgs | Where-Object { $_ -ne "--dry-run" })
+  $forwardedArgs = @($OpenCodeArgs | Where-Object { $_ -ne "--dry-run" })
+  if (-not (@($forwardedArgs | Where-Object { $_ -eq "--model" -or $_ -like "--model=*" }).Count -gt 0)) {
+    & opencode --model "ccswitch/$($runtime.ModelId)" @forwardedArgs
+  } else {
+    & opencode @forwardedArgs
+  }
   $exitCode = $LASTEXITCODE
 } finally {
   if ($null -eq $previousKey) { Remove-Item Env:CCSWITCH_OPENCODE_API_KEY -ErrorAction SilentlyContinue } else { $env:CCSWITCH_OPENCODE_API_KEY = $previousKey }

@@ -1,15 +1,33 @@
 [CmdletBinding()]
 param(
   [string]$InstallDir = (Join-Path $env:APPDATA "npm"),
-  [switch]$NoPathUpdate
+  [switch]$NoPathUpdate,
+  [switch]$Latest,
+  [switch]$Uninstall
 )
 
 $ErrorActionPreference = "Stop"
-$releaseTag = "v0.2.1"
+$releaseTag = if ($env:CCSWITCH_LAUNCHER_VERSION) { $env:CCSWITCH_LAUNCHER_VERSION } else { "v0.3.0" }
+if ($Latest -and -not $env:CCSWITCH_LAUNCHER_VERSION) {
+  try {
+    $releaseTag = [string](Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/9527-rain/ccswitch-opencode-launcher/releases/latest").tag_name
+  } catch {
+    throw "Could not resolve the latest GitHub Release: $($_.Exception.Message)"
+  }
+}
+if ($releaseTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "Invalid release tag: $releaseTag" }
 $releaseBase = if ($env:CCSWITCH_LAUNCHER_RELEASE_BASE) { $env:CCSWITCH_LAUNCHER_RELEASE_BASE.TrimEnd("/") } else { "https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/$releaseTag" }
 $scriptPath = $MyInvocation.MyCommand.Path
 $sourceDir = if ($scriptPath) { Split-Path -Parent $scriptPath } else { $null }
 $temporarySource = $false
+
+if ($Uninstall) {
+  foreach ($name in @("opencode-ccswitch.ps1", "opencode-ccswitch.cmd", "install.ps1")) {
+    Remove-Item -LiteralPath (Join-Path $InstallDir $name) -Force -ErrorAction SilentlyContinue
+  }
+  Write-Host "Uninstalled opencode-ccswitch from $InstallDir"
+  exit 0
+}
 
 function Get-ExpectedSha256([string]$ChecksumFile, [string]$AssetName) {
   $line = Get-Content -LiteralPath $ChecksumFile | Where-Object { $_ -match "\s$([regex]::Escape($AssetName))$" } | Select-Object -First 1
@@ -17,7 +35,7 @@ function Get-ExpectedSha256([string]$ChecksumFile, [string]$AssetName) {
   return ($line -split '\s+')[0].ToLowerInvariant()
 }
 
-if (-not $sourceDir -or -not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
+if ($Latest -or -not $sourceDir -or -not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
   $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("ccswitch-opencode-install-" + [guid]::NewGuid().ToString("N"))
   $archiveName = "ccswitch-opencode-launcher-$releaseTag-windows.zip"
   $archivePath = Join-Path $temporaryRoot $archiveName
@@ -41,6 +59,7 @@ try {
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1") -Destination (Join-Path $InstallDir "opencode-ccswitch.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.cmd") -Destination (Join-Path $InstallDir "opencode-ccswitch.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $sourceDir "install.ps1") -Destination (Join-Path $InstallDir "install.ps1") -Force
 
   if (-not $NoPathUpdate) {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -54,5 +73,5 @@ try {
   Write-Host "Installed opencode-ccswitch $releaseTag to $InstallDir"
   Write-Host "Run: opencode-ccswitch"
 } finally {
-  if ($temporarySource) { Remove-Item -LiteralPath $sourceDir -Recurse -Force -ErrorAction SilentlyContinue }
+  if ($temporarySource) { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

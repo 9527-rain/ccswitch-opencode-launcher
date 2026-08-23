@@ -3,6 +3,7 @@
 [![CI](https://github.com/9527-rain/ccswitch-opencode-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/9527-rain/ccswitch-opencode-launcher/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/9527-rain/ccswitch-opencode-launcher?display_name=tag)](https://github.com/9527-rain/ccswitch-opencode-launcher/releases/latest)
 [![License](https://img.shields.io/github/license/9527-rain/ccswitch-opencode-launcher)](LICENSE)
+[![Security](https://img.shields.io/badge/security-policy-available-blue)](SECURITY.md)
 
 **CCSwitch 切换模型后，OpenCode 下次启动自动同步。**
 
@@ -15,14 +16,14 @@
 ### Windows
 
 ```powershell
-irm https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.2.1/install.ps1 | iex
+irm https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.3.0/install.ps1 | iex
 opencode-ccswitch
 ```
 
 ### macOS / Linux
 
 ```sh
-curl -fsSL https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.2.1/install.sh | sh
+curl -fsSL https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.3.0/install.sh | sh
 opencode-ccswitch
 ```
 
@@ -50,6 +51,7 @@ opencode-ccswitch
 - Reads the active provider, API endpoint, key, default model, and reasoning effort locally.
 - Can discover models from an OpenAI-compatible `/models` endpoint when explicitly enabled.
 - Uses OpenCode's custom `OPENCODE_CONFIG` override and a per-process temporary config.
+- Generates only the launcher-owned provider/model layer; OpenCode's global/project MCP, plugin, permission, and agent settings remain in place through OpenCode's config merge.
 - Passes the API key to the OpenCode child process and restores the parent environment afterwards; it does not write `auth.json` or print the key.
 - Keeps your regular OpenCode configuration untouched.
 
@@ -82,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1
 One-line install from GitHub:
 
 ```powershell
-irm https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.2.1/install.ps1 | iex
+irm https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.3.0/install.ps1 | iex
 ```
 
 The installer copies the launcher to `%APPDATA%\\npm` and adds that directory to the user `PATH` when needed. Open a new terminal afterwards if PATH was changed.
@@ -98,7 +100,7 @@ From a cloned repository:
 One-line install from GitHub:
 
 ```sh
-curl -fsSL https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.2.1/install.sh | sh
+curl -fsSL https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/v0.3.0/install.sh | sh
 ```
 
 The default install directory is `~/.local/bin`. Add it to `PATH` if the installer reports that it is missing.
@@ -126,6 +128,8 @@ By default, the launcher prefers CCSwitch's native `opencode` provider and falls
 
 ```text
 opencode-ccswitch doctor
+
+维护命令：`opencode-ccswitch doctor --json` 输出机器可读诊断，`opencode-ccswitch --version` 查看版本，`opencode-ccswitch update` 从 Release 校验并升级，`opencode-ccswitch uninstall` 删除启动器文件。
 ```
 
 `doctor` prints the selected provider, model, API base URL, dependency status, and whether a key is configured. It never prints the key. Model discovery is disabled by default; enable it only when needed:
