@@ -39,4 +39,4 @@ jobs:
           else
             gh release create "$TAG" --title "CCSwitch OpenCode Launcher $TAG" --generate-notes --notes-file release-notes.md
           fi
-          gh release upload "$TAG" dist/*.zip dist/*.tar.gz dist/checksums.txt --clobber
+          gh release upload "$TAG" dist/*.zip dist/*.tar.gz dist/checksums.txt install.ps1 install.sh --clobber
