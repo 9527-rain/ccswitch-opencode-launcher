@@ -15,14 +15,14 @@
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.ps1 | iex
 opencode-ccswitch
 ```
 
 ### macOS / Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.sh | sh
 opencode-ccswitch
 ```
 
@@ -48,7 +48,7 @@ opencode-ccswitch
 
 - Supports CCSwitch's native `opencode` providers and older `codex` providers.
 - Reads the active provider, API endpoint, key, default model, and reasoning effort locally.
-- Discovers models from an OpenAI-compatible `/models` endpoint when available.
+- Can discover models from an OpenAI-compatible `/models` endpoint when explicitly enabled.
 - Uses OpenCode's custom `OPENCODE_CONFIG` override and a per-process temporary config.
 - Passes the API key only to the child OpenCode process; it does not write `auth.json` or print the key.
 - Keeps your regular OpenCode configuration untouched.
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1
 One-line install from GitHub:
 
 ```powershell
-irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.ps1 | iex
 ```
 
 The installer copies the launcher to `%APPDATA%\\npm` and adds that directory to the user `PATH` when needed. Open a new terminal afterwards if PATH was changed.
@@ -98,7 +98,7 @@ From a cloned repository:
 One-line install from GitHub:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.sh | sh
 ```
 
 The default install directory is `~/.local/bin`. Add it to `PATH` if the installer reports that it is missing.
@@ -124,6 +124,17 @@ The launcher does not change an already-running OpenCode session. Start a new se
 
 By default, the launcher prefers CCSwitch's native `opencode` provider and falls back to the active `codex` provider when no OpenCode provider exists. You can override selection for testing:
 
+```text
+opencode-ccswitch doctor
+```
+
+`doctor` prints the selected provider, model, API base URL, dependency status, and whether a key is configured. It never prints the key. Model discovery is disabled by default; enable it only when needed:
+
+```powershell
+$env:CCSWITCH_MODEL_DISCOVERY = "best-effort"
+opencode-ccswitch
+```
+
 ```powershell
 $env:CCSWITCH_APP_TYPE = "codex"
 $env:CCSWITCH_PROVIDER_ID = "provider-id"
@@ -140,7 +151,7 @@ Useful overrides:
 | `CCSWITCH_APP_TYPE` | Force `opencode` or `codex` provider selection |
 | `CCSWITCH_PROVIDER_ID` | Force a specific provider ID |
 | `CCSWITCH_OPENCODE_NPM` | Override the AI SDK package, such as `@ai-sdk/openai` |
-| `CCSWITCH_MODEL_DISCOVERY` | `best-effort` (default), `never`, or `required` |
+| `CCSWITCH_MODEL_DISCOVERY` | `never` (default), `best-effort`, or `required` |
 | `OPENCODE_GENERATED_CONFIG` | Keep the generated config at a chosen private path instead of a temporary file |
 
 For a provider that only supports `/v1/responses`, set:
@@ -152,7 +163,7 @@ opencode-ccswitch
 
 ## Security
 
-API credentials are read locally and passed through a child-process environment variable. They are never printed or stored in the generated config. Do not commit CCSwitch databases, OpenCode credential files, or generated configs.
+API credentials are read locally and passed through a child-process environment variable. Generated configs use a strict option allowlist and do not include provider keys, tokens, secrets, or custom headers. API discovery is opt-in and uses only the explicit HTTPS API base URL. Do not commit CCSwitch databases, OpenCode credential files, or generated configs.
 
 ## License
 

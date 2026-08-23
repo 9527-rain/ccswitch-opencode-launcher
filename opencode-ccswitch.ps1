@@ -75,6 +75,33 @@ function Resolve-ApiKey($ProviderConfig) {
   return $value
 }
 
+function Assert-BaseUrl([string]$BaseUrl, [string]$ProviderName) {
+  $value = $BaseUrl.Trim().TrimEnd("/")
+  if (-not $value) { throw "Provider $ProviderName has no explicit API base URL." }
+  $uri = $null
+  if (-not [Uri]::TryCreate($value, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @("https", "http")) {
+    throw "Provider $ProviderName has an invalid API base URL."
+  }
+  if ($uri.Scheme -ne "https" -and $uri.Host -notin @("localhost", "127.0.0.1", "::1")) {
+    throw "API base URL must use HTTPS (HTTP is allowed only for localhost)."
+  }
+  return $value
+}
+
+function Get-SafeOptions($ProviderConfig, [string]$BaseUrl) {
+  $result = [ordered]@{ baseURL = $BaseUrl; apiKey = "{env:CCSWITCH_OPENCODE_API_KEY}" }
+  $options = Get-ObjectValue $ProviderConfig "options"
+  $allowed = @("organization", "project", "compatibility", "fetch", "timeout")
+  if ($options) {
+    foreach ($property in $options.PSObject.Properties) {
+      if ($property.Name -in $allowed -and $property.Name -notmatch '(?i)(api.?key|token|secret|password|credential)') {
+        $result[$property.Name] = Convert-ToHashtable $property.Value
+      }
+    }
+  }
+  return $result
+}
+
 function Get-ProviderSelection($Settings, [string]$RequestedAppType, [string]$RequestedProviderId, [string]$Sqlite, [string]$Database) {
   $appType = $RequestedAppType
   if (-not $appType) {
@@ -133,14 +160,13 @@ function Get-ProviderRuntime($Selection) {
       if ($id) { $modelMap[$id] = [ordered]@{ name = [string](Get-FirstPropertyValue $entry @("displayName", "name", "model")) } }
     }
   }
-  if (-not $baseUrl) { $baseUrl = [string]$row.website_url }
-  if (-not $baseUrl) { throw "The active CCSwitch provider has no base URL." }
+  $baseUrl = Assert-BaseUrl $baseUrl ([string]$row.name)
   if (-not $modelId) { $modelId = "default" }
   return [pscustomobject]@{ ProviderConfig = $providerConfig; Npm = $npm; BaseUrl = $baseUrl.TrimEnd("/"); ModelId = $modelId; ReasoningEffort = $reasoningEffort; ModelMap = $modelMap; ApiKey = Resolve-ApiKey $providerConfig }
 }
 
 function Add-RemoteModels($Runtime) {
-  if ($env:CCSWITCH_MODEL_DISCOVERY -ne "never") {
+  if ($env:CCSWITCH_MODEL_DISCOVERY -in @("best-effort", "required")) {
     try {
       $headers = @{ Authorization = "Bearer $($Runtime.ApiKey)" }
       $catalog = Invoke-RestMethod -Uri "$($Runtime.BaseUrl)/models" -Headers $headers -Method Get -TimeoutSec 15
@@ -167,23 +193,27 @@ $settingsPath = Join-Path $ccRoot "settings.json"
 $customGeneratedConfig = [bool]$env:OPENCODE_GENERATED_CONFIG
 $generatedConfig = if ($customGeneratedConfig) { $env:OPENCODE_GENERATED_CONFIG } else { Join-Path $env:TEMP "ccswitch-opencode-$PID.json" }
 if (-not (Test-Path -LiteralPath $dbPath)) { throw "CCSwitch database not found: $dbPath" }
-if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { throw "OpenCode was not found on PATH." }
 $sqlite = Get-SqliteExecutable
 $settings = if (Test-Path -LiteralPath $settingsPath) { Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
 $selection = Get-ProviderSelection $settings $env:CCSWITCH_APP_TYPE $env:CCSWITCH_PROVIDER_ID $sqlite $dbPath
 $runtime = Get-ProviderRuntime $selection
+if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor")) {
+  Write-Host "provider: $($selection.Row.name)"
+  Write-Host "app type: $($selection.AppType)"
+  Write-Host "model: $($runtime.ModelId)"
+  Write-Host "api base URL: $($runtime.BaseUrl)"
+  Write-Host "api key: configured"
+  Write-Host "opencode: $(if (Get-Command opencode -ErrorAction SilentlyContinue) { 'found' } else { 'missing' })"
+  exit 0
+}
 if (-not $runtime.ApiKey) { throw "The active CCSwitch provider has no API key." }
+if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { throw "OpenCode was not found on PATH." }
 Add-RemoteModels $runtime
 
 $configDir = Split-Path -Parent $generatedConfig
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-$options = [ordered]@{ baseURL = $runtime.BaseUrl; apiKey = "{env:CCSWITCH_OPENCODE_API_KEY}" }
-if ($runtime.ProviderConfig.options) {
-  foreach ($property in $runtime.ProviderConfig.options.PSObject.Properties) {
-    if ($property.Name -notin @("baseURL", "apiKey")) { $options[$property.Name] = Convert-ToHashtable $property.Value }
-  }
-}
+$options = Get-SafeOptions $runtime.ProviderConfig $runtime.BaseUrl
 $config = [ordered]@{
   '$schema' = "https://opencode.ai/config.json"
   provider = [ordered]@{ ccswitch = [ordered]@{ npm = $runtime.Npm; name = "CCSwitch: $($selection.Row.name)"; options = $options; models = $runtime.ModelMap } }

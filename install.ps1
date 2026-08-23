@@ -5,12 +5,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$rawBase = if ($env:CCSWITCH_LAUNCHER_RAW_BASE) { $env:CCSWITCH_LAUNCHER_RAW_BASE.TrimEnd("/") } else { "https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/main" }
+$releaseTag = "v0.1.1"
+$rawBase = if ($env:CCSWITCH_LAUNCHER_RAW_BASE) { $env:CCSWITCH_LAUNCHER_RAW_BASE.TrimEnd("/") } else { "https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/$releaseTag" }
 $scriptPath = $MyInvocation.MyCommand.Path
-$sourceDir = if ($scriptPath) { Split-Path -Parent $scriptPath } else { "" }
+$sourceDir = if ($scriptPath) { Split-Path -Parent $scriptPath } else { $null }
 $temporarySource = $false
 
-if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
+if (-not $sourceDir -or -not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
   $sourceDir = Join-Path ([IO.Path]::GetTempPath()) ("ccswitch-opencode-install-" + [guid]::NewGuid().ToString("N"))
   New-Item -ItemType Directory -Path $sourceDir -Force | Out-Null
   $temporarySource = $true
