@@ -15,14 +15,14 @@
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.1/install.ps1 | iex
 opencode-ccswitch
 ```
 
 ### macOS / Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.1/install.sh | sh
 opencode-ccswitch
 ```
 
@@ -50,7 +50,7 @@ opencode-ccswitch
 - Reads the active provider, API endpoint, key, default model, and reasoning effort locally.
 - Can discover models from an OpenAI-compatible `/models` endpoint when explicitly enabled.
 - Uses OpenCode's custom `OPENCODE_CONFIG` override and a per-process temporary config.
-- Passes the API key only to the child OpenCode process; it does not write `auth.json` or print the key.
+- Passes the API key to the OpenCode child process and restores the parent environment afterwards; it does not write `auth.json` or print the key.
 - Keeps your regular OpenCode configuration untouched.
 
 ## Requirements
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1
 One-line install from GitHub:
 
 ```powershell
-irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.1/install.ps1 | iex
 ```
 
 The installer copies the launcher to `%APPDATA%\\npm` and adds that directory to the user `PATH` when needed. Open a new terminal afterwards if PATH was changed.
@@ -98,7 +98,7 @@ From a cloned repository:
 One-line install from GitHub:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.1/install.sh | sh
 ```
 
 The default install directory is `~/.local/bin`. Add it to `PATH` if the installer reports that it is missing.
@@ -169,7 +169,7 @@ opencode-ccswitch
 
 ## Security
 
-API credentials are read locally and passed through a child-process environment variable. Generated configs use a strict option allowlist and do not include provider keys, tokens, secrets, or custom headers. API discovery is opt-in and uses only the explicit HTTPS API base URL. Do not commit CCSwitch databases, OpenCode credential files, or generated configs.
+API credentials are read locally and passed through a child-process environment variable. Generated configs use a strict option allowlist and do not include provider keys, tokens, secrets, or custom headers. API base URLs cannot contain credentials or query parameters. API discovery is opt-in and uses only the explicit HTTPS API base URL. Do not commit CCSwitch databases, OpenCode credential files, or generated configs.
 
 ## License
 

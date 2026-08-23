@@ -22,9 +22,18 @@ function Get-SqliteExecutable {
 }
 
 function Invoke-SqliteJson([string]$Executable, [string]$Database, [string]$Query) {
-  $output = (& $Executable -readonly -json -noheader $Database $Query 2>$null) -join "`n"
+  $errors = [IO.Path]::GetTempFileName()
+  try {
+    $output = (& $Executable -readonly -json -noheader $Database $Query 2> $errors) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+      $message = Get-Content -LiteralPath $errors -Raw -ErrorAction SilentlyContinue
+      throw "sqlite3.exe failed: $message"
+    }
+  } finally {
+    Remove-Item -LiteralPath $errors -Force -ErrorAction SilentlyContinue
+  }
   if (-not $output) { return $null }
-  $value = $output | ConvertFrom-Json
+  try { $value = $output | ConvertFrom-Json } catch { throw "sqlite3.exe must support the -json option. Update SQLite: $($_.Exception.Message)" }
   if ($value -is [array] -and $value.Count -eq 1) { return $value[0] }
   return $value
 }
@@ -82,10 +91,18 @@ function Assert-BaseUrl([string]$BaseUrl, [string]$ProviderName) {
   if (-not [Uri]::TryCreate($value, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @("https", "http")) {
     throw "Provider $ProviderName has an invalid API base URL."
   }
+  if ($uri.UserInfo -or $uri.Query -or $uri.Fragment) {
+    throw "API base URL must not include credentials, query parameters, or fragments."
+  }
   if ($uri.Scheme -ne "https" -and $uri.Host -notin @("localhost", "127.0.0.1", "::1")) {
     throw "API base URL must use HTTPS (HTTP is allowed only for localhost)."
   }
   return $value
+}
+
+function Get-DisplayBaseUrl([string]$BaseUrl) {
+  $uri = [Uri]$BaseUrl
+  return "$($uri.Scheme)://$($uri.Host)$(if ($uri.IsDefaultPort) { '' } else { ':' + $uri.Port })$($uri.AbsolutePath)".TrimEnd("/")
 }
 
 function Get-SafeOptions($ProviderConfig, [string]$BaseUrl) {
@@ -239,7 +256,7 @@ if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor"))
   Write-Host "provider: $($selection.Row.name)"
   Write-Host "app type: $($selection.AppType)"
   Write-Host "model: $($runtime.ModelId)"
-  Write-Host "api base URL: $($runtime.BaseUrl)"
+  Write-Host "api base URL: $(Get-DisplayBaseUrl $runtime.BaseUrl)"
   Write-Host "api key: $(if ($runtime.ApiKey) { 'configured' } else { 'missing' })"
   Write-Host "opencode: $(if (Get-Command opencode -ErrorAction SilentlyContinue) { 'found' } else { 'missing' })"
   Write-Host "model discovery: $(if ($env:CCSWITCH_MODEL_DISCOVERY) { $env:CCSWITCH_MODEL_DISCOVERY } else { 'never' })"
@@ -251,6 +268,11 @@ if (-not $dryRun) {
   Add-RemoteModels $runtime
 } elseif (-not $runtime.ModelMap.Contains($runtime.ModelId)) {
   $runtime.ModelMap[$runtime.ModelId] = [ordered]@{ name = $runtime.ModelId }
+}
+if ($dryRun -and $runtime.ReasoningEffort) {
+  $entry = $runtime.ModelMap[$runtime.ModelId]
+  if ($entry -isnot [System.Collections.IDictionary]) { $entry = Convert-ToHashtable $entry; $runtime.ModelMap[$runtime.ModelId] = $entry }
+  $entry.options = [ordered]@{ reasoningEffort = $runtime.ReasoningEffort }
 }
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -270,13 +292,17 @@ $configDir = Split-Path -Parent $generatedConfig
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 [IO.File]::WriteAllText($generatedConfig, ($config | ConvertTo-Json -Depth 50), $utf8)
 
-$env:CCSWITCH_OPENCODE_API_KEY = $runtime.ApiKey
-$env:OPENCODE_CONFIG = $generatedConfig
 Write-Host "CCSwitch [$($selection.AppType)] provider: $($selection.Row.name) | model: $($runtime.ModelId)"
 try {
+  $previousKey = $env:CCSWITCH_OPENCODE_API_KEY
+  $previousConfig = $env:OPENCODE_CONFIG
+  $env:CCSWITCH_OPENCODE_API_KEY = $runtime.ApiKey
+  $env:OPENCODE_CONFIG = $generatedConfig
   & opencode @($OpenCodeArgs | Where-Object { $_ -ne "--dry-run" })
   $exitCode = $LASTEXITCODE
 } finally {
+  if ($null -eq $previousKey) { Remove-Item Env:CCSWITCH_OPENCODE_API_KEY -ErrorAction SilentlyContinue } else { $env:CCSWITCH_OPENCODE_API_KEY = $previousKey }
+  if ($null -eq $previousConfig) { Remove-Item Env:OPENCODE_CONFIG -ErrorAction SilentlyContinue } else { $env:OPENCODE_CONFIG = $previousConfig }
   if (-not $customGeneratedConfig) { Remove-Item -LiteralPath $generatedConfig -Force -ErrorAction SilentlyContinue }
 }
 exit $exitCode

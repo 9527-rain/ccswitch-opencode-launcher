@@ -72,6 +72,8 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(opencode_ccswitch.validate_base_url("http://localhost:8080/v1", "Local"), "http://localhost:8080/v1")
         with self.assertRaisesRegex(RuntimeError, "HTTPS"):
             opencode_ccswitch.validate_base_url("http://api.example.test/v1", "Remote")
+        with self.assertRaisesRegex(RuntimeError, "query"):
+            opencode_ccswitch.validate_base_url("https://api.example.test/v1?token=secret", "Query")
 
     def test_discovery_mode_must_be_explicit(self):
         opencode_ccswitch.validate_discovery_mode("never")

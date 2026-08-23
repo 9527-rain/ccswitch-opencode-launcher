@@ -76,9 +76,18 @@ def validate_base_url(base_url: Any, provider_name: str) -> str:
     parsed = urlparse(value_)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:
         raise RuntimeError(f"Provider {provider_name} has an invalid API base URL")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RuntimeError("API base URL must not include credentials, query parameters, or fragments")
     if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
         raise RuntimeError("API base URL must use HTTPS (HTTP is allowed only for localhost)")
     return value_
+
+
+def display_base_url(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}{parsed.path}".rstrip("/")
 
 
 def safe_options(config: dict[str, Any], base_url: str) -> dict[str, Any]:
@@ -228,7 +237,7 @@ def print_doctor() -> int:
     print(f"provider: {row['name']}")
     print(f"app type: {app_type}")
     print(f"model: {runtime['model_id']}")
-    print(f"api base URL: {runtime['base_url']}")
+    print(f"api base URL: {display_base_url(runtime['base_url'])}")
     print(f"api key: {'configured' if runtime['api_key'] else 'missing'}")
     print(f"opencode: {'found' if shutil.which('opencode') else 'missing'}")
     print(f"model discovery: {os.environ.get('CCSWITCH_MODEL_DISCOVERY', 'never')}")

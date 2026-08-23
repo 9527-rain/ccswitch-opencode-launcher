@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1
+
+- Reject API URLs containing embedded credentials, query parameters, or fragments.
+- Restore the Windows parent PowerShell environment after launching OpenCode.
+- Add actionable SQLite errors and validate JSON support on Windows.
+- Make local Unix installs explicit and remote installs use Release assets with SHA256 verification.
+- Align `--dry-run` reasoning effort output across platforms.
+
 ## v0.2.0
 
 - Recursively remove credential-like fields from model metadata and generated config.

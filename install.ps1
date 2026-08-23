@@ -5,22 +5,35 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$releaseTag = "v0.2.0"
-$rawBase = if ($env:CCSWITCH_LAUNCHER_RAW_BASE) { $env:CCSWITCH_LAUNCHER_RAW_BASE.TrimEnd("/") } else { "https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/$releaseTag" }
+$releaseTag = "v0.2.1"
+$releaseBase = if ($env:CCSWITCH_LAUNCHER_RELEASE_BASE) { $env:CCSWITCH_LAUNCHER_RELEASE_BASE.TrimEnd("/") } else { "https://github.com/9527-rain/ccswitch-opencode-launcher/releases/download/$releaseTag" }
 $scriptPath = $MyInvocation.MyCommand.Path
 $sourceDir = if ($scriptPath) { Split-Path -Parent $scriptPath } else { $null }
 $temporarySource = $false
 
+function Get-ExpectedSha256([string]$ChecksumFile, [string]$AssetName) {
+  $line = Get-Content -LiteralPath $ChecksumFile | Where-Object { $_ -match "\s$([regex]::Escape($AssetName))$" } | Select-Object -First 1
+  if (-not $line) { throw "No SHA256 checksum was published for $AssetName" }
+  return ($line -split '\s+')[0].ToLowerInvariant()
+}
+
 if (-not $sourceDir -or -not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
-  $sourceDir = Join-Path ([IO.Path]::GetTempPath()) ("ccswitch-opencode-install-" + [guid]::NewGuid().ToString("N"))
-  New-Item -ItemType Directory -Path $sourceDir -Force | Out-Null
+  $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("ccswitch-opencode-install-" + [guid]::NewGuid().ToString("N"))
+  $archiveName = "ccswitch-opencode-launcher-$releaseTag-windows.zip"
+  $archivePath = Join-Path $temporaryRoot $archiveName
+  $checksumPath = Join-Path $temporaryRoot "checksums.txt"
+  $sourceDir = Join-Path $temporaryRoot "payload"
+  New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
   $temporarySource = $true
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri "$rawBase/opencode-ccswitch.ps1" -OutFile (Join-Path $sourceDir "opencode-ccswitch.ps1")
-    Invoke-WebRequest -UseBasicParsing -Uri "$rawBase/opencode-ccswitch.cmd" -OutFile (Join-Path $sourceDir "opencode-ccswitch.cmd")
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/$archiveName" -OutFile $archivePath
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/checksums.txt" -OutFile $checksumPath
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    if ($actual -ne (Get-ExpectedSha256 $checksumPath $archiveName)) { throw "SHA256 verification failed for $archiveName" }
+    Expand-Archive -LiteralPath $archivePath -DestinationPath $sourceDir -Force
   } catch {
-    Remove-Item -LiteralPath $sourceDir -Recurse -Force -ErrorAction SilentlyContinue
-    throw "Could not download launcher files from $rawBase`: $($_.Exception.Message)"
+    Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    throw "Could not download or verify $releaseTag`: $($_.Exception.Message)"
   }
 }
 
@@ -38,7 +51,7 @@ try {
       Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use opencode-ccswitch."
     }
   }
-  Write-Host "Installed opencode-ccswitch to $InstallDir"
+  Write-Host "Installed opencode-ccswitch $releaseTag to $InstallDir"
   Write-Host "Run: opencode-ccswitch"
 } finally {
   if ($temporarySource) { Remove-Item -LiteralPath $sourceDir -Recurse -Force -ErrorAction SilentlyContinue }
