@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$releaseTag = "v0.1.1"
+$releaseTag = "v0.2.0"
 $rawBase = if ($env:CCSWITCH_LAUNCHER_RAW_BASE) { $env:CCSWITCH_LAUNCHER_RAW_BASE.TrimEnd("/") } else { "https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/$releaseTag" }
 $scriptPath = $MyInvocation.MyCommand.Path
 $sourceDir = if ($scriptPath) { Split-Path -Parent $scriptPath } else { $null }

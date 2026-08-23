@@ -33,9 +33,16 @@ def db_rows(path: Path, query: str, params: tuple[Any, ...] = ()) -> list[dict[s
         raise RuntimeError(f"CCSwitch database not found: {path}")
     uri = f"file:{path.as_posix()}?mode=ro"
     try:
-        with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+        connection = sqlite3.connect(uri, uri=True, timeout=5)
+        try:
             connection.row_factory = sqlite3.Row
-            return [dict(row) for row in connection.execute(query, params)]
+            cursor = connection.execute(query, params)
+            try:
+                return [dict(row) for row in cursor]
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
     except sqlite3.Error as exc:
         raise RuntimeError(f"Could not read CCSwitch database: {exc}") from exc
 
@@ -78,14 +85,25 @@ def safe_options(config: dict[str, Any], base_url: str) -> dict[str, Any]:
     options = value(config, "options", {})
     if not isinstance(options, dict):
         return {"baseURL": base_url, "apiKey": "{env:CCSWITCH_OPENCODE_API_KEY}"}
-    blocked = re.compile(r"(?:api.?key|token|secret|password|credential)", re.I)
     allowed = {"organization", "project", "compatibility", "fetch", "timeout"}
     result: dict[str, Any] = {"baseURL": base_url, "apiKey": "{env:CCSWITCH_OPENCODE_API_KEY}"}
     for key, item in options.items():
-        if key in {"baseURL", "apiKey"} or blocked.search(str(key)) or str(key) not in allowed:
+        if key in {"baseURL", "apiKey"} or str(key) not in allowed:
             continue
-        result[str(key)] = item
+        result[str(key)] = sanitize(item)
     return result
+
+
+SENSITIVE_KEY = re.compile(r"(?:api.?key|token|secret|password|credential|authorization|cookie)", re.I)
+
+
+def sanitize(item: Any) -> Any:
+    """Recursively remove credential-like keys from provider metadata."""
+    if isinstance(item, dict):
+        return {str(key): sanitize(value_) for key, value_ in item.items() if not SENSITIVE_KEY.search(str(key))}
+    if isinstance(item, list):
+        return [sanitize(value_) for value_ in item]
+    return item
 
 
 def current_provider(settings: dict[str, Any], app_type: str, provider_id: str | None) -> tuple[str, str]:
@@ -135,7 +153,7 @@ def runtime_for(app_type: str, row: dict[str, Any], require_key: bool = True) ->
         options = value(config, "options", {})
         base_url = value(options, "baseURL")
         if isinstance(value(config, "models"), dict):
-            models = json.loads(json.dumps(value(config, "models")))
+            models = sanitize(json.loads(json.dumps(value(config, "models"))))
         meta = read_json_from_text(row.get("meta"))
         model_id = value(meta, "model") or value(meta, "defaultModel") or value(config, "model")
         if not model_id and models:
@@ -171,8 +189,7 @@ def read_json_from_text(text: Any) -> dict[str, Any]:
 
 def discover_models(runtime: dict[str, Any]) -> None:
     mode = os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never")
-    if mode not in {"never", "best-effort", "required"}:
-        raise RuntimeError("CCSWITCH_MODEL_DISCOVERY must be never, best-effort, or required")
+    validate_discovery_mode(mode)
     if mode != "never":
         request = urllib.request.Request(
             f"{runtime['base_url']}/models",
@@ -195,6 +212,11 @@ def discover_models(runtime: dict[str, Any]) -> None:
         runtime["models"].setdefault(model_id, {})["options"] = {"reasoningEffort": runtime["effort"]}
 
 
+def validate_discovery_mode(mode: str) -> None:
+    if mode not in {"never", "best-effort", "required"}:
+        raise RuntimeError("CCSWITCH_MODEL_DISCOVERY must be never, best-effort, or required")
+
+
 def print_doctor() -> int:
     global DB_PATH
     cc_root = Path(os.environ.get("CCSWITCH_HOME", Path.home() / ".cc-switch"))
@@ -202,25 +224,44 @@ def print_doctor() -> int:
     settings = read_json(cc_root / "settings.json", {})
     app_type, row = current_provider(settings, os.environ.get("CCSWITCH_APP_TYPE", ""), os.environ.get("CCSWITCH_PROVIDER_ID"))
     runtime = runtime_for(app_type, row, require_key=False)
+    validate_discovery_mode(os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never"))
     print(f"provider: {row['name']}")
     print(f"app type: {app_type}")
     print(f"model: {runtime['model_id']}")
     print(f"api base URL: {runtime['base_url']}")
     print(f"api key: {'configured' if runtime['api_key'] else 'missing'}")
     print(f"opencode: {'found' if shutil.which('opencode') else 'missing'}")
+    print(f"model discovery: {os.environ.get('CCSWITCH_MODEL_DISCOVERY', 'never')}")
     return 0
 
 
 def main(argv: list[str]) -> int:
     if argv and argv[0] in {"doctor", "--doctor"}:
         return print_doctor()
+    dry_run = "--dry-run" in argv
+    forwarded_args = [arg for arg in argv if arg != "--dry-run"]
     global DB_PATH
     cc_root = Path(os.environ.get("CCSWITCH_HOME", Path.home() / ".cc-switch"))
     DB_PATH = Path(os.environ.get("CCSWITCH_DB", cc_root / "cc-switch.db"))
     settings = read_json(cc_root / "settings.json", {})
     app_type, row = current_provider(settings, os.environ.get("CCSWITCH_APP_TYPE", ""), os.environ.get("CCSWITCH_PROVIDER_ID"))
-    runtime = runtime_for(app_type, row)
-    discover_models(runtime)
+    runtime = runtime_for(app_type, row, require_key=not dry_run)
+    if dry_run:
+        runtime["models"].setdefault(runtime["model_id"], {"name": runtime["model_id"]})
+        if runtime["effort"]:
+            runtime["models"][runtime["model_id"]]["options"] = {"reasoningEffort": runtime["effort"]}
+    else:
+        discover_models(runtime)
+
+    options = safe_options(runtime["config"], runtime["base_url"])
+    generated = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {"ccswitch": {"npm": runtime["npm"], "name": f"CCSwitch: {row['name']}", "options": options, "models": runtime["models"]}},
+        "model": f"ccswitch/{runtime['model_id']}",
+    }
+    if dry_run:
+        print(json.dumps(generated, ensure_ascii=False, indent=2))
+        return 0
 
     custom_config = os.environ.get("OPENCODE_GENERATED_CONFIG")
     temporary = not custom_config
@@ -231,12 +272,6 @@ def main(argv: list[str]) -> int:
         os.close(descriptor)
         config_path = Path(temporary_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    options = safe_options(runtime["config"], runtime["base_url"])
-    generated = {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {"ccswitch": {"npm": runtime["npm"], "name": f"CCSwitch: {row['name']}", "options": options, "models": runtime["models"]}},
-        "model": f"ccswitch/{runtime['model_id']}",
-    }
     try:
         config_path.write_text(json.dumps(generated, ensure_ascii=False, indent=2), encoding="utf-8")
         executable = shutil.which("opencode")
@@ -246,7 +281,7 @@ def main(argv: list[str]) -> int:
         env["CCSWITCH_OPENCODE_API_KEY"] = runtime["api_key"]
         env["OPENCODE_CONFIG"] = str(config_path)
         print(f"CCSwitch [{app_type}] provider: {row['name']} | model: {runtime['model_id']}", flush=True)
-        return subprocess.call([executable, *argv], env=env)
+        return subprocess.call([executable, *forwarded_args], env=env)
     finally:
         if temporary:
             try:

@@ -15,14 +15,14 @@
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.ps1 | iex
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.ps1 | iex
 opencode-ccswitch
 ```
 
 ### macOS / Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.sh | sh
 opencode-ccswitch
 ```
 
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1
 One-line install from GitHub:
 
 ```powershell
-irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.ps1 | iex
+irm https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.ps1 | iex
 ```
 
 The installer copies the launcher to `%APPDATA%\\npm` and adds that directory to the user `PATH` when needed. Open a new terminal afterwards if PATH was changed.
@@ -98,7 +98,7 @@ From a cloned repository:
 One-line install from GitHub:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.1.1/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/v0.2.0/install.sh | sh
 ```
 
 The default install directory is `~/.local/bin`. Add it to `PATH` if the installer reports that it is missing.
@@ -133,6 +133,12 @@ opencode-ccswitch doctor
 ```powershell
 $env:CCSWITCH_MODEL_DISCOVERY = "best-effort"
 opencode-ccswitch
+```
+
+Preview the sanitized generated configuration without starting OpenCode or contacting the provider:
+
+```text
+opencode-ccswitch --dry-run
 ```
 
 ```powershell

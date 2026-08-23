@@ -95,11 +95,37 @@ function Get-SafeOptions($ProviderConfig, [string]$BaseUrl) {
   if ($options) {
     foreach ($property in $options.PSObject.Properties) {
       if ($property.Name -in $allowed -and $property.Name -notmatch '(?i)(api.?key|token|secret|password|credential)') {
-        $result[$property.Name] = Convert-ToHashtable $property.Value
+        $result[$property.Name] = Sanitize-Value $property.Value
       }
     }
   }
   return $result
+}
+
+function Sanitize-Value($Object) {
+  if ($null -eq $Object) { return $null }
+  if ($Object -is [System.Collections.IDictionary]) {
+    $result = [ordered]@{}
+    foreach ($key in $Object.Keys) {
+      if ([string]$key -notmatch '(?i)(api.?key|token|secret|password|credential|authorization|cookie)') {
+        $result[$key] = Sanitize-Value $Object[$key]
+      }
+    }
+    return $result
+  }
+  if ($Object -is [pscustomobject]) {
+    $result = [ordered]@{}
+    foreach ($property in $Object.PSObject.Properties) {
+      if ($property.Name -notmatch '(?i)(api.?key|token|secret|password|credential|authorization|cookie)') {
+        $result[$property.Name] = Sanitize-Value $property.Value
+      }
+    }
+    return $result
+  }
+  if ($Object -is [System.Collections.IEnumerable] -and $Object -isnot [string]) {
+    return @($Object | ForEach-Object { Sanitize-Value $_ })
+  }
+  return $Object
 }
 
 function Get-ProviderSelection($Settings, [string]$RequestedAppType, [string]$RequestedProviderId, [string]$Sqlite, [string]$Database) {
@@ -126,6 +152,9 @@ function Get-ProviderSelection($Settings, [string]$RequestedAppType, [string]$Re
   } else { $where += " AND is_current=1" }
   $row = Invoke-SqliteJson $Sqlite $Database "SELECT id,name,settings_config,meta,website_url FROM providers WHERE $where LIMIT 1;"
   if ($row -is [array]) { $row = $row | Select-Object -First 1 }
+  if (-not $row -and -not $RequestedAppType -and $appType -eq "opencode") {
+    return Get-ProviderSelection $Settings "codex" $RequestedProviderId $Sqlite $Database
+  }
   if (-not $row) { throw "No active CCSwitch $appType provider was found." }
   return [pscustomobject]@{ AppType = $appType; ProviderId = [string]$row.id; Row = $row }
 }
@@ -141,7 +170,7 @@ function Get-ProviderRuntime($Selection) {
     $options = Get-ObjectValue $providerConfig "options"
     $baseUrl = [string](Get-ObjectValue $options "baseURL")
     $models = Get-ObjectValue $providerConfig "models"
-    if ($models) { foreach ($property in $models.PSObject.Properties) { $modelMap[$property.Name] = Convert-ToHashtable $property.Value } }
+    if ($models) { foreach ($property in $models.PSObject.Properties) { $modelMap[$property.Name] = Sanitize-Value $property.Value } }
     $meta = [string](Get-ObjectValue $row "meta")
     if ($meta) { try { $metaObject = $meta | ConvertFrom-Json; $modelId = [string](Get-FirstPropertyValue $metaObject @("model", "defaultModel")) } catch { } }
     if (-not $modelId) { $modelId = [string](Get-ObjectValue $providerConfig "model") }
@@ -166,6 +195,7 @@ function Get-ProviderRuntime($Selection) {
 }
 
 function Add-RemoteModels($Runtime) {
+  Assert-DiscoveryMode
   if ($env:CCSWITCH_MODEL_DISCOVERY -in @("best-effort", "required")) {
     try {
       $headers = @{ Authorization = "Bearer $($Runtime.ApiKey)" }
@@ -187,6 +217,12 @@ function Add-RemoteModels($Runtime) {
   }
 }
 
+function Assert-DiscoveryMode {
+  if ($env:CCSWITCH_MODEL_DISCOVERY -and $env:CCSWITCH_MODEL_DISCOVERY -notin @("never", "best-effort", "required")) {
+    throw "CCSWITCH_MODEL_DISCOVERY must be never, best-effort, or required."
+  }
+}
+
 $ccRoot = if ($env:CCSWITCH_HOME) { $env:CCSWITCH_HOME } else { Join-Path $env:USERPROFILE ".cc-switch" }
 $dbPath = if ($env:CCSWITCH_DB) { $env:CCSWITCH_DB } else { Join-Path $ccRoot "cc-switch.db" }
 $settingsPath = Join-Path $ccRoot "settings.json"
@@ -197,35 +233,48 @@ $sqlite = Get-SqliteExecutable
 $settings = if (Test-Path -LiteralPath $settingsPath) { Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
 $selection = Get-ProviderSelection $settings $env:CCSWITCH_APP_TYPE $env:CCSWITCH_PROVIDER_ID $sqlite $dbPath
 $runtime = Get-ProviderRuntime $selection
+$dryRun = $OpenCodeArgs -contains "--dry-run"
+Assert-DiscoveryMode
 if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor")) {
   Write-Host "provider: $($selection.Row.name)"
   Write-Host "app type: $($selection.AppType)"
   Write-Host "model: $($runtime.ModelId)"
   Write-Host "api base URL: $($runtime.BaseUrl)"
-  Write-Host "api key: configured"
+  Write-Host "api key: $(if ($runtime.ApiKey) { 'configured' } else { 'missing' })"
   Write-Host "opencode: $(if (Get-Command opencode -ErrorAction SilentlyContinue) { 'found' } else { 'missing' })"
+  Write-Host "model discovery: $(if ($env:CCSWITCH_MODEL_DISCOVERY) { $env:CCSWITCH_MODEL_DISCOVERY } else { 'never' })"
   exit 0
 }
-if (-not $runtime.ApiKey) { throw "The active CCSwitch provider has no API key." }
-if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { throw "OpenCode was not found on PATH." }
-Add-RemoteModels $runtime
+if (-not $runtime.ApiKey -and -not $dryRun) { throw "The active CCSwitch provider has no API key." }
+if (-not $dryRun) {
+  if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { throw "OpenCode was not found on PATH." }
+  Add-RemoteModels $runtime
+} elseif (-not $runtime.ModelMap.Contains($runtime.ModelId)) {
+  $runtime.ModelMap[$runtime.ModelId] = [ordered]@{ name = $runtime.ModelId }
+}
 
-$configDir = Split-Path -Parent $generatedConfig
-New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $options = Get-SafeOptions $runtime.ProviderConfig $runtime.BaseUrl
+$sanitizedModels = [ordered]@{}
+foreach ($modelId in $runtime.ModelMap.Keys) { $sanitizedModels[$modelId] = Sanitize-Value $runtime.ModelMap[$modelId] }
 $config = [ordered]@{
   '$schema' = "https://opencode.ai/config.json"
-  provider = [ordered]@{ ccswitch = [ordered]@{ npm = $runtime.Npm; name = "CCSwitch: $($selection.Row.name)"; options = $options; models = $runtime.ModelMap } }
+  provider = [ordered]@{ ccswitch = [ordered]@{ npm = $runtime.Npm; name = "CCSwitch: $($selection.Row.name)"; options = $options; models = $sanitizedModels } }
   model = "ccswitch/$($runtime.ModelId)"
 }
+if ($dryRun) {
+  $config | ConvertTo-Json -Depth 50
+  exit 0
+}
+$configDir = Split-Path -Parent $generatedConfig
+New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 [IO.File]::WriteAllText($generatedConfig, ($config | ConvertTo-Json -Depth 50), $utf8)
 
 $env:CCSWITCH_OPENCODE_API_KEY = $runtime.ApiKey
 $env:OPENCODE_CONFIG = $generatedConfig
 Write-Host "CCSwitch [$($selection.AppType)] provider: $($selection.Row.name) | model: $($runtime.ModelId)"
 try {
-  & opencode @OpenCodeArgs
+  & opencode @($OpenCodeArgs | Where-Object { $_ -ne "--dry-run" })
   $exitCode = $LASTEXITCODE
 } finally {
   if (-not $customGeneratedConfig) { Remove-Item -LiteralPath $generatedConfig -Force -ErrorAction SilentlyContinue }

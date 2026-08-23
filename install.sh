@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-RELEASE_TAG=v0.1.1
+RELEASE_TAG=v0.2.0
 RAW_BASE=${CCSWITCH_LAUNCHER_RAW_BASE:-https://raw.githubusercontent.com/9527-rain/ccswitch-opencode-launcher/$RELEASE_TAG}
 INSTALL_DIR=${OPENCODE_CCSWITCH_INSTALL_DIR:-${XDG_BIN_HOME:-"$HOME/.local/bin"}}
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
