@@ -32,7 +32,7 @@ jobs:
           cat > release-notes.md <<'EOF'
           CCSwitch 切换模型后，自动同步 OpenCode。
 
-          本版本支持 Windows、macOS 和 Linux，自动读取 provider、API 地址、模型与推理强度，并使用隔离配置启动 OpenCode。
+          This release adds CCSwitch schema detection, stable doctor diagnostics, strict CI-friendly checks, pinned upgrades, and cross-platform OpenCode process integration tests.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "CCSwitch OpenCode Launcher $TAG" --notes-file release-notes.md

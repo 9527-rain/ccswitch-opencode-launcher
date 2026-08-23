@@ -3,6 +3,11 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 case "${1:-}" in
   update)
+    if [ "${2:-}" = "--version" ] || [ "${2:-}" = "-v" ]; then
+      [ -n "${3:-}" ] || { echo "update --version requires vX.Y.Z" >&2; exit 2; }
+      exec env OPENCODE_CCSWITCH_INSTALL_DIR="$SCRIPT_DIR" sh "$SCRIPT_DIR/install.sh" --version "$3"
+    fi
+    [ "$#" -eq 1 ] || { echo "update usage: update [--version vX.Y.Z]" >&2; exit 2; }
     exec env OPENCODE_CCSWITCH_INSTALL_DIR="$SCRIPT_DIR" sh "$SCRIPT_DIR/install.sh" --latest
     ;;
   uninstall)

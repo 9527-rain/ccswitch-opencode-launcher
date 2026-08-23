@@ -28,6 +28,46 @@ try {
     $env:CCSWITCH_DB = $oldDb
     $env:CCSWITCH_SQLITE = $oldSqlite
   }
+  $fakeOpenCode = Join-Path $root "opencode.cmd"
+  $fakeContent = @(
+    "@echo off",
+    "echo ARGS=%*",
+    "if defined CCSWITCH_OPENCODE_API_KEY echo KEY_CONFIGURED",
+    "if defined OPENCODE_CONFIG echo CONFIG_CONFIGURED",
+    "exit /b 0"
+  ) -join "`r`n"
+  Set-Content -LiteralPath $fakeOpenCode -Value $fakeContent -Encoding ASCII
+  $oldPath = $env:PATH
+  $oldHome = $env:CCSWITCH_HOME
+  $oldDb = $env:CCSWITCH_DB
+  $oldSqlite = $env:CCSWITCH_SQLITE
+  $env:PATH = "$root;$oldPath"
+  $env:CCSWITCH_HOME = $root
+  $env:CCSWITCH_DB = $db
+  $env:CCSWITCH_SQLITE = (Get-Command sqlite3.exe).Source
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw $output }
+    if ($output -notmatch 'ARGS=--model ccswitch/demo') { throw "launcher did not inject the selected model: $output" }
+    if ($output -notmatch 'KEY_CONFIGURED' -or $output -notmatch 'CONFIG_CONFIGURED') { throw "launcher did not configure the child process environment: $output" }
+  } finally {
+    $env:PATH = $oldPath
+    $env:CCSWITCH_HOME = $oldHome
+    $env:CCSWITCH_DB = $oldDb
+    $env:CCSWITCH_SQLITE = $oldSqlite
+  }
+  $missingRoot = Join-Path $root "missing"
+  New-Item -ItemType Directory -Path $missingRoot -Force | Out-Null
+  $oldHome = $env:CCSWITCH_HOME
+  $env:CCSWITCH_HOME = $missingRoot
+  try {
+    $doctor = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") doctor --json --strict 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 1) { throw "strict doctor should fail for a missing database: $doctor" }
+    $diagnostic = $doctor | ConvertFrom-Json
+    if ($diagnostic.issues.code -notcontains "database_missing") { throw "doctor did not report database_missing: $doctor" }
+  } finally {
+    $env:CCSWITCH_HOME = $oldHome
+  }
   Write-Host "Windows integration test passed"
 } finally {
   Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

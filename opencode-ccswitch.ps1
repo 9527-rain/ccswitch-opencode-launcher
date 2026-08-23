@@ -5,7 +5,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$LauncherVersion = "0.3.0"
+$LauncherVersion = "0.4.0"
+$DoctorSchemaVersion = 1
+$RequiredProviderColumns = @("id", "name", "settings_config", "meta", "app_type", "is_current")
 
 function Get-SqliteExecutable {
   if ($env:CCSWITCH_SQLITE) {
@@ -39,8 +41,22 @@ function Invoke-SqliteJson([string]$Executable, [string]$Database, [string]$Quer
   return $value
 }
 
+function Get-DatabaseSchemaInfo([string]$Executable, [string]$Database) {
+  $versionRow = Invoke-SqliteJson $Executable $Database "PRAGMA user_version;"
+  $columnRows = @(Invoke-SqliteJson $Executable $Database "PRAGMA table_info(providers);")
+  $columns = @($columnRows | ForEach-Object { [string](Get-ObjectValue $_ "name") } | Where-Object { $_ })
+  $missing = @($RequiredProviderColumns | Where-Object { $_ -notin $columns })
+  return [ordered]@{
+    status = if ($missing.Count -eq 0) { "supported" } else { "unsupported" }
+    user_version = [int](Get-ObjectValue $versionRow "user_version")
+    columns = @($columns | Sort-Object -Unique)
+    missing_columns = @($missing | Sort-Object -Unique)
+  }
+}
+
 function Get-ObjectValue($Object, [string]$Name) {
   if (-not $Object) { return $null }
+  if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($Name)) { return $Object[$Name] }
   $property = $Object.PSObject.Properties[$Name]
   if ($property) { return $property.Value }
   return $null
@@ -241,11 +257,11 @@ function Assert-DiscoveryMode {
   }
 }
 
-function Invoke-Maintenance([string]$Action) {
+function Invoke-Maintenance([string]$Action, [string]$Version) {
   $installer = Join-Path $PSScriptRoot "install.ps1"
   if (-not (Test-Path -LiteralPath $installer)) { throw "Maintenance requires install.ps1 beside the launcher. Reinstall from a GitHub Release." }
   if ($Action -eq "update") {
-    & $installer -InstallDir $PSScriptRoot -Latest
+    if ($Version) { & $installer -InstallDir $PSScriptRoot -ReleaseVersion $Version } else { & $installer -InstallDir $PSScriptRoot -Latest }
   } else {
     & $installer -InstallDir $PSScriptRoot -Uninstall
   }
@@ -256,8 +272,15 @@ if ($OpenCodeArgs.Count -eq 1 -and $OpenCodeArgs[0] -eq "--version") {
   Write-Output "CCSwitch OpenCode Launcher v$LauncherVersion"
   exit 0
 }
-if ($OpenCodeArgs.Count -eq 1 -and $OpenCodeArgs[0] -in @("update", "uninstall")) {
-  Invoke-Maintenance $OpenCodeArgs[0]
+if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("update", "uninstall")) {
+  if ($OpenCodeArgs[0] -eq "uninstall" -and $OpenCodeArgs.Count -gt 1) { throw "uninstall accepts no options" }
+  $updateVersion = $null
+  if ($OpenCodeArgs[0] -eq "update") {
+    if ($OpenCodeArgs.Count -eq 3 -and $OpenCodeArgs[1] -in @("--version", "-v")) { $updateVersion = $OpenCodeArgs[2] }
+    elseif ($OpenCodeArgs.Count -ne 1) { throw "update usage: update [--version vX.Y.Z]" }
+    if ($updateVersion -and $updateVersion -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "update version must look like vX.Y.Z" }
+  }
+  Invoke-Maintenance $OpenCodeArgs[0] $updateVersion
 }
 
 $ccRoot = if ($env:CCSWITCH_HOME) { $env:CCSWITCH_HOME } else { Join-Path $env:USERPROFILE ".cc-switch" }
@@ -265,35 +288,68 @@ $dbPath = if ($env:CCSWITCH_DB) { $env:CCSWITCH_DB } else { Join-Path $ccRoot "c
 $settingsPath = Join-Path $ccRoot "settings.json"
 $customGeneratedConfig = [bool]$env:OPENCODE_GENERATED_CONFIG
 $generatedConfig = if ($customGeneratedConfig) { $env:OPENCODE_GENERATED_CONFIG } else { Join-Path $env:TEMP "ccswitch-opencode-$PID.json" }
-if (-not (Test-Path -LiteralPath $dbPath)) { throw "CCSwitch database not found: $dbPath" }
+$isDoctorRequest = $OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor")
 $sqlite = Get-SqliteExecutable
+$schema = if (Test-Path -LiteralPath $dbPath) {
+  Get-DatabaseSchemaInfo $sqlite $dbPath
+} elseif ($isDoctorRequest) {
+  [ordered]@{ status = "missing"; user_version = $null; columns = @(); missing_columns = @($RequiredProviderColumns) }
+} else {
+  throw "CCSwitch database not found: $dbPath"
+}
+if ((Get-ObjectValue $schema "status") -ne "supported") {
+  if (-not $isDoctorRequest) {
+    $missing = [string]::Join(", ", @($schema.missing_columns))
+    throw "Unsupported CCSwitch database schema; missing providers columns: $missing"
+  }
+}
 $settings = if (Test-Path -LiteralPath $settingsPath) { Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
-$selection = Get-ProviderSelection $settings $env:CCSWITCH_APP_TYPE $env:CCSWITCH_PROVIDER_ID $sqlite $dbPath
-$runtime = Get-ProviderRuntime $selection
+$selection = $null
+$runtime = $null
+$providerError = $null
+if ((Get-ObjectValue $schema "status") -eq "supported") {
+  try {
+    $selection = Get-ProviderSelection $settings $env:CCSWITCH_APP_TYPE $env:CCSWITCH_PROVIDER_ID $sqlite $dbPath
+    $runtime = Get-ProviderRuntime $selection
+  } catch {
+    $providerError = $_.Exception.Message
+    if (-not ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor"))) { throw }
+  }
+}
 $dryRun = $OpenCodeArgs -contains "--dry-run"
-Assert-DiscoveryMode
-if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor")) {
+if (-not $isDoctorRequest) { Assert-DiscoveryMode }
+if ($isDoctorRequest) {
   $doctorArgs = @($OpenCodeArgs | Select-Object -Skip 1)
-  if (@($doctorArgs | Where-Object { $_ -ne "--json" }).Count -gt 0) { throw "doctor accepts only --json" }
+  if (@($doctorArgs | Where-Object { $_ -notin @("--json", "--strict") }).Count -gt 0) { throw "doctor accepts only --json and --strict" }
   $openCodeCommand = Get-Command opencode -ErrorAction SilentlyContinue
+  $issues = [System.Collections.Generic.List[object]]::new()
+  if ((Get-ObjectValue $schema "status") -eq "missing") { $issues.Add([ordered]@{ code = "database_missing"; message = "CCSwitch database not found: $dbPath" }) }
+  elseif ((Get-ObjectValue $schema "status") -ne "supported") { $issues.Add([ordered]@{ code = "schema_unsupported"; message = "Missing providers columns: $([string]::Join(', ', @($schema.missing_columns)))" }) }
+  if ($providerError) { $issues.Add([ordered]@{ code = "provider_invalid"; message = $providerError }) }
+  if ($runtime -and -not $runtime.ApiKey) { $issues.Add([ordered]@{ code = "api_key_missing"; message = "The active provider has no API key" }) }
+  if (-not $openCodeCommand) { $issues.Add([ordered]@{ code = "opencode_missing"; message = "OpenCode was not found on PATH" }) }
+  if ($env:CCSWITCH_MODEL_DISCOVERY -and $env:CCSWITCH_MODEL_DISCOVERY -notin @("never", "best-effort", "required")) { $issues.Add([ordered]@{ code = "discovery_mode_invalid"; message = "CCSWITCH_MODEL_DISCOVERY must be never, best-effort, or required" }) }
   $doctor = [ordered]@{
+    doctor_schema = $DoctorSchemaVersion
     launcher_version = $LauncherVersion
     platform = [Environment]::OSVersion.Platform.ToString()
+    status = if ($issues.Count -eq 0) { "ok" } else { "warning" }
+    issues = @($issues)
     powershell = [ordered]@{ version = $PSVersionTable.PSVersion.ToString(); supported = $PSVersionTable.PSVersion -ge [version]"5.1" }
-    ccswitch = [ordered]@{ home = $ccRoot; database = $dbPath; sqlite = $sqlite }
+    ccswitch = [ordered]@{ home = $ccRoot; database = $dbPath; sqlite = $sqlite; schema = $schema }
     provider = [ordered]@{
-      name = $selection.Row.name
-      app_type = $selection.AppType
-      model = $runtime.ModelId
-      api_base_url = Get-DisplayBaseUrl $runtime.BaseUrl
-      api_key = if ($runtime.ApiKey) { "configured" } else { "missing" }
+      name = if ($selection) { $selection.Row.name } else { $null }
+      app_type = if ($selection) { $selection.AppType } else { $null }
+      model = if ($runtime) { $runtime.ModelId } else { $null }
+      api_base_url = if ($runtime) { Get-DisplayBaseUrl $runtime.BaseUrl } else { $null }
+      api_key = if (-not $runtime) { "unknown" } elseif ($runtime.ApiKey) { "configured" } else { "missing" }
     }
     opencode = [ordered]@{ status = if ($openCodeCommand) { "found" } else { "missing" }; path = if ($openCodeCommand) { $openCodeCommand.Source } else { $null } }
     model_discovery = if ($env:CCSWITCH_MODEL_DISCOVERY) { $env:CCSWITCH_MODEL_DISCOVERY } else { "never" }
   }
   if ($doctorArgs -contains "--json") {
     $doctor | ConvertTo-Json -Depth 10
-    exit 0
+    exit $(if ($doctorArgs -contains "--strict" -and $issues.Count -gt 0) { 1 } else { 0 })
   }
   Write-Host "launcher version: $($doctor.launcher_version)"
   Write-Host "provider: $($doctor.provider.name)"
@@ -305,7 +361,9 @@ if ($OpenCodeArgs.Count -gt 0 -and $OpenCodeArgs[0] -in @("doctor", "--doctor"))
   Write-Host "sqlite3: $($doctor.ccswitch.sqlite)"
   Write-Host "opencode: $($doctor.opencode.status)"
   Write-Host "model discovery: $($doctor.model_discovery)"
-  exit 0
+  Write-Host "status: $($doctor.status)"
+  foreach ($issue in $issues) { Write-Host "warning [$($issue.code)]: $($issue.message)" }
+  exit $(if ($doctorArgs -contains "--strict" -and $issues.Count -gt 0) { 1 } else { 0 })
 }
 if (-not $runtime.ApiKey -and -not $dryRun) { throw "The active CCSwitch provider has no API key." }
 if (-not $dryRun) {

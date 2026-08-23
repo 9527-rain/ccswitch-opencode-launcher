@@ -16,7 +16,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
+DOCTOR_SCHEMA_VERSION = 1
+REQUIRED_PROVIDER_COLUMNS = {"id", "name", "settings_config", "meta", "app_type", "is_current"}
 
 
 def value(obj: Any, name: str, default: Any = None) -> Any:
@@ -47,6 +49,38 @@ def db_rows(path: Path, query: str, params: tuple[Any, ...] = ()) -> list[dict[s
             connection.close()
     except sqlite3.Error as exc:
         raise RuntimeError(f"Could not read CCSwitch database: {exc}") from exc
+
+
+def db_schema_info(path: Path) -> dict[str, Any]:
+    """Inspect only stable SQLite metadata before querying CCSwitch rows."""
+    if not path.exists():
+        return {"status": "missing", "user_version": None, "columns": [], "missing_columns": sorted(REQUIRED_PROVIDER_COLUMNS)}
+    try:
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=5)
+        try:
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(providers)")}
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Could not inspect CCSwitch database: {exc}") from exc
+    missing = sorted(REQUIRED_PROVIDER_COLUMNS - columns)
+    return {
+        "status": "supported" if not missing else "unsupported",
+        "user_version": version,
+        "columns": sorted(columns),
+        "missing_columns": missing,
+    }
+
+
+def require_supported_schema(path: Path) -> dict[str, Any]:
+    info = db_schema_info(path)
+    if info["status"] == "missing":
+        raise RuntimeError(f"CCSwitch database not found: {path}")
+    if info["status"] != "supported":
+        missing = ", ".join(info["missing_columns"])
+        raise RuntimeError(f"Unsupported CCSwitch database schema; missing providers columns: {missing}")
+    return info
 
 
 def resolve_key(config: dict[str, Any]) -> str | None:
@@ -118,6 +152,7 @@ def sanitize(item: Any) -> Any:
 
 
 def current_provider(settings: dict[str, Any], app_type: str, provider_id: str | None) -> tuple[str, str]:
+    require_supported_schema(DB_PATH)
     if app_type:
         selected_type = app_type
     else:
@@ -248,32 +283,56 @@ def doctor_data() -> dict[str, Any]:
     cc_root = Path(os.environ.get("CCSWITCH_HOME", Path.home() / ".cc-switch"))
     DB_PATH = Path(os.environ.get("CCSWITCH_DB", cc_root / "cc-switch.db"))
     settings = read_json(cc_root / "settings.json", {})
-    app_type, row = current_provider(settings, os.environ.get("CCSWITCH_APP_TYPE", ""), os.environ.get("CCSWITCH_PROVIDER_ID"))
-    runtime = runtime_for(app_type, row, require_key=False)
-    validate_discovery_mode(os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never"))
+    issues: list[dict[str, str]] = []
+    schema = db_schema_info(DB_PATH)
+    provider: dict[str, Any] = {"name": None, "app_type": None, "model": None, "api_base_url": None, "api_key": "unknown"}
+    if schema["status"] == "missing":
+        issues.append({"code": "database_missing", "message": f"CCSwitch database not found: {DB_PATH}"})
+    elif schema["status"] != "supported":
+        missing = ", ".join(schema["missing_columns"])
+        issues.append({"code": "schema_unsupported", "message": f"Missing providers columns: {missing}"})
+    else:
+        try:
+            app_type, row = current_provider(settings, os.environ.get("CCSWITCH_APP_TYPE", ""), os.environ.get("CCSWITCH_PROVIDER_ID"))
+            runtime = runtime_for(app_type, row, require_key=False)
+            provider = {
+                "name": row["name"],
+                "app_type": app_type,
+                "model": runtime["model_id"],
+                "api_base_url": display_base_url(runtime["base_url"]),
+                "api_key": "configured" if runtime["api_key"] else "missing",
+            }
+            if not runtime["api_key"]:
+                issues.append({"code": "api_key_missing", "message": "The active provider has no API key"})
+        except RuntimeError as exc:
+            issues.append({"code": "provider_invalid", "message": str(exc)})
+    discovery = os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never")
+    try:
+        validate_discovery_mode(discovery)
+    except RuntimeError as exc:
+        issues.append({"code": "discovery_mode_invalid", "message": str(exc)})
     executable = shutil.which("opencode")
+    if not executable:
+        issues.append({"code": "opencode_missing", "message": "OpenCode was not found on PATH"})
     return {
+        "doctor_schema": DOCTOR_SCHEMA_VERSION,
         "launcher_version": __version__,
         "platform": sys.platform,
         "python": {"version": sys.version.split()[0], "supported": sys.version_info >= (3, 9)},
-        "ccswitch": {"home": str(cc_root), "database": str(DB_PATH)},
-        "provider": {
-            "name": row["name"],
-            "app_type": app_type,
-            "model": runtime["model_id"],
-            "api_base_url": display_base_url(runtime["base_url"]),
-            "api_key": "configured" if runtime["api_key"] else "missing",
-        },
+        "status": "ok" if not issues else "warning",
+        "issues": issues,
+        "ccswitch": {"home": str(cc_root), "database": str(DB_PATH), "schema": schema},
+        "provider": provider,
         "opencode": {"status": "found" if executable else "missing", "path": executable},
-        "model_discovery": os.environ.get("CCSWITCH_MODEL_DISCOVERY", "never"),
+        "model_discovery": discovery,
     }
 
 
-def print_doctor(json_output: bool = False) -> int:
+def print_doctor(json_output: bool = False, strict: bool = False) -> int:
     details = doctor_data()
     if json_output:
         print(json.dumps(details, ensure_ascii=False, indent=2))
-        return 0
+        return 1 if strict and details["issues"] else 0
     provider = details["provider"]
     print(f"launcher version: {details['launcher_version']}")
     print(f"provider: {provider['name']}")
@@ -284,16 +343,26 @@ def print_doctor(json_output: bool = False) -> int:
     print(f"python: {details['python']['version']} ({'supported' if details['python']['supported'] else 'unsupported'})")
     print(f"opencode: {details['opencode']['status']}")
     print(f"model discovery: {details['model_discovery']}")
-    return 0
+    if details["issues"]:
+        print("status: warning")
+        for issue in details["issues"]:
+            print(f"warning [{issue['code']}]: {issue['message']}")
+    else:
+        print("status: ok")
+    return 1 if strict and details["issues"] else 0
 
 
-def run_maintenance(action: str) -> int:
+def run_maintenance(action: str, version: str | None = None) -> int:
     installer = Path(__file__).with_name("install.sh")
     if not installer.exists():
         raise RuntimeError("Maintenance requires install.sh beside the launcher. Reinstall from a GitHub Release.")
     environment = os.environ.copy()
     environment["OPENCODE_CCSWITCH_INSTALL_DIR"] = str(installer.parent)
-    arguments = ["sh", str(installer), "--latest" if action == "update" else "--uninstall"]
+    arguments = ["sh", str(installer)]
+    if action == "update":
+        arguments.extend(["--version", version] if version else ["--latest"])
+    else:
+        arguments.append("--uninstall")
     return subprocess.call(arguments, env=environment)
 
 
@@ -303,13 +372,25 @@ def main(argv: list[str]) -> int:
     if argv == ["--version"]:
         print(f"CCSwitch OpenCode Launcher v{__version__}")
         return 0
-    if argv in (["update"], ["uninstall"]):
-        return run_maintenance(argv[0])
+    if argv and argv[0] in {"update", "uninstall"}:
+        action = argv[0]
+        if action == "uninstall" and argv[1:]:
+            raise RuntimeError("uninstall accepts no options")
+        if action == "update":
+            version = None
+            if len(argv) == 3 and argv[1] in {"--version", "-v"}:
+                version = argv[2]
+            elif len(argv) != 1:
+                raise RuntimeError("update usage: update [--version vX.Y.Z]")
+            if version and not re.fullmatch(r"v\d+\.\d+\.\d+", version):
+                raise RuntimeError("update version must look like vX.Y.Z")
+            return run_maintenance(action, version)
+        return run_maintenance(action)
     if argv and argv[0] in {"doctor", "--doctor"}:
-        invalid_options = set(argv[1:]) - {"--json"}
+        invalid_options = set(argv[1:]) - {"--json", "--strict"}
         if invalid_options:
-            raise RuntimeError("doctor accepts only --json")
-        return print_doctor(json_output="--json" in argv[1:])
+            raise RuntimeError("doctor accepts only --json and --strict")
+        return print_doctor(json_output="--json" in argv[1:], strict="--strict" in argv[1:])
     dry_run = "--dry-run" in argv
     forwarded_args = [arg for arg in argv if arg != "--dry-run"]
     global DB_PATH

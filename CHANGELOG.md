@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.0
+
+- Detect the CCSwitch `providers` schema before reading provider data and report missing columns clearly.
+- Add stable `doctor_schema`, issue codes, `doctor --strict`, and machine-readable warning status.
+- Support pinned maintenance upgrades with `update --version vX.Y.Z`.
+- Add regression coverage for schema detection and strict diagnostics.
+- Document the verified platform, provider, and OpenCode compatibility matrix.
+- Add fake OpenCode integration tests for child-process arguments, environment isolation, and temporary-config cleanup.
+
 ## v0.3.0
 
 - Preserve OpenCode global/project configuration by generating only the provider/model override layer.

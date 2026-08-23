@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-RELEASE_TAG=${CCSWITCH_LAUNCHER_VERSION:-v0.3.0}
+RELEASE_TAG=${CCSWITCH_LAUNCHER_VERSION:-v0.4.0}
 INSTALL_DIR=${OPENCODE_CCSWITCH_INSTALL_DIR:-${XDG_BIN_HOME:-"$HOME/.local/bin"}}
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SOURCE_DIR=
@@ -10,18 +10,33 @@ cleanup() { [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
 ACTION=install
-for arg in "$@"; do
-  case "$arg" in
+REQUESTED_VERSION=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --help|-h)
-      printf '%s\n' "Usage: install.sh [--latest|--uninstall] [--no-path-update]"
+      printf '%s\n' "Usage: install.sh [--latest|--version vX.Y.Z|--uninstall] [--no-path-update]"
       exit 0
       ;;
-    --latest) ACTION=latest ;;
+    --latest)
+      [ "$ACTION" = install ] || { echo "--latest cannot be combined with another action" >&2; exit 2; }
+      ACTION=latest
+      ;;
     --uninstall) ACTION=uninstall ;;
+    --version|-v)
+      [ "$ACTION" = install ] || { echo "--version cannot be combined with another action" >&2; exit 2; }
+      [ "$#" -ge 2 ] || { echo "--version requires vX.Y.Z" >&2; exit 2; }
+      case "$2" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "--version requires vX.Y.Z" >&2; exit 2 ;; esac
+      ACTION=version
+      REQUESTED_VERSION=$2
+      shift
+      ;;
     --no-path-update) NO_PATH_UPDATE=1 ;;
-    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
+
+if [ -n "$REQUESTED_VERSION" ]; then RELEASE_TAG=$REQUESTED_VERSION; fi
 
 if [ "$ACTION" = latest ] && [ -z "${CCSWITCH_LAUNCHER_VERSION:-}" ]; then
   command -v curl >/dev/null 2>&1 || { echo "curl is required to resolve the latest release" >&2; exit 1; }
@@ -36,7 +51,7 @@ if [ "$ACTION" = uninstall ]; then
   exit 0
 fi
 
-if [ "$ACTION" != latest ] && [ "$(basename -- "$0")" = "install.sh" ] && [ -f "$SCRIPT_DIR/opencode-ccswitch.py" ]; then
+if [ "$ACTION" = install ] && [ "$(basename -- "$0")" = "install.sh" ] && [ -f "$SCRIPT_DIR/opencode-ccswitch.py" ]; then
   SOURCE_DIR=$SCRIPT_DIR
 else
   command -v curl >/dev/null 2>&1 || { echo "curl is required for remote installation" >&2; exit 1; }

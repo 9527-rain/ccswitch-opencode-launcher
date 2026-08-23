@@ -3,12 +3,14 @@ param(
   [string]$InstallDir = (Join-Path $env:APPDATA "npm"),
   [switch]$NoPathUpdate,
   [switch]$Latest,
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  [string]$ReleaseVersion
 )
 
 $ErrorActionPreference = "Stop"
-$releaseTag = if ($env:CCSWITCH_LAUNCHER_VERSION) { $env:CCSWITCH_LAUNCHER_VERSION } else { "v0.3.0" }
-if ($Latest -and -not $env:CCSWITCH_LAUNCHER_VERSION) {
+if ($Latest -and $ReleaseVersion) { throw "Use either -Latest or -ReleaseVersion, not both" }
+$releaseTag = if ($ReleaseVersion) { $ReleaseVersion } elseif ($env:CCSWITCH_LAUNCHER_VERSION) { $env:CCSWITCH_LAUNCHER_VERSION } else { "v0.4.0" }
+if ($Latest -and -not $ReleaseVersion -and -not $env:CCSWITCH_LAUNCHER_VERSION) {
   try {
     $releaseTag = [string](Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/9527-rain/ccswitch-opencode-launcher/releases/latest").tag_name
   } catch {
@@ -35,7 +37,7 @@ function Get-ExpectedSha256([string]$ChecksumFile, [string]$AssetName) {
   return ($line -split '\s+')[0].ToLowerInvariant()
 }
 
-if ($Latest -or -not $sourceDir -or -not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
+if ($Latest -or $ReleaseVersion -or -not $sourceDir -or -not (Test-Path -LiteralPath (Join-Path $sourceDir "opencode-ccswitch.ps1"))) {
   $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("ccswitch-opencode-install-" + [guid]::NewGuid().ToString("N"))
   $archiveName = "ccswitch-opencode-launcher-$releaseTag-windows.zip"
   $archivePath = Join-Path $temporaryRoot $archiveName

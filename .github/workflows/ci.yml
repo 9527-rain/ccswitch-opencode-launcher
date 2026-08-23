@@ -16,7 +16,6 @@ jobs:
       - run: python -m unittest discover -v
       - run: sh -n install.sh opencode-ccswitch
       - run: ./install.sh --help
-        continue-on-error: true
 
   powershell:
     runs-on: windows-latest
