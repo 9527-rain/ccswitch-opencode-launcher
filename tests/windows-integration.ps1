@@ -3,6 +3,7 @@ $root = Join-Path $env:TEMP ("ccswitch-opencode-test-" + [guid]::NewGuid().ToStr
 $db = Join-Path $root "cc-switch.db"
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 try {
+  Write-Host "[1/4] Creating CCSwitch fixture"
   $settingsConfig = @{ auth = @{ OPENAI_API_KEY = "secret-key" }; options = @{ baseURL = "https://api.example.test/v1" }; models = @{ demo = @{ name = "Demo" } } } | ConvertTo-Json -Compress
   $meta = @{ model = "demo" } | ConvertTo-Json -Compress
   $settingsSql = $settingsConfig.Replace("'", "''")
@@ -20,7 +21,8 @@ try {
   $env:CCSWITCH_DB = $db
   $env:CCSWITCH_SQLITE = $sqliteCommand
   try {
-    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") --dry-run 2>&1 | Out-String
+    Write-Host "[2/4] Running PowerShell dry-run"
+    $output = & (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") --dry-run 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw $output }
     if ($output -notmatch '"model":\s+"ccswitch/demo"') { throw "dry-run did not select fixture model: $output" }
     if ($output -match "secret-key") { throw "dry-run leaked API key" }
@@ -47,7 +49,8 @@ try {
   $env:CCSWITCH_DB = $db
   $env:CCSWITCH_SQLITE = $sqliteCommand
   try {
-    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") 2>&1 | Out-String
+    Write-Host "[3/4] Running fake OpenCode launch"
+    $output = & (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw $output }
     if ($output -notmatch 'ARGS=--model ccswitch/demo') { throw "launcher did not inject the selected model: $output" }
     if ($output -notmatch 'KEY_CONFIGURED' -or $output -notmatch 'CONFIG_CONFIGURED') { throw "launcher did not configure the child process environment: $output" }
@@ -62,7 +65,8 @@ try {
   $oldHome = $env:CCSWITCH_HOME
   $env:CCSWITCH_HOME = $missingRoot
   try {
-    $doctor = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") doctor --json --strict 2>&1 | Out-String
+    Write-Host "[4/4] Running strict doctor"
+    $doctor = & (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") doctor --json --strict 2>&1 | Out-String
     if ($LASTEXITCODE -ne 1) { throw "strict doctor should fail for a missing database: $doctor" }
     $diagnostic = $doctor | ConvertFrom-Json
     if ($diagnostic.issues.code -notcontains "database_missing") { throw "doctor did not report database_missing: $doctor" }
