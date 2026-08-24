@@ -142,6 +142,8 @@ opencode-ccswitch
 
 `doctor` also reports the detected CCSwitch SQLite schema. Unknown or missing provider columns are rejected before launch instead of producing a misleading configuration.
 
+For a local Windows integration check, run `tests\\windows-integration.ps1` from PowerShell in a checkout.
+
 Preview the sanitized generated configuration without starting OpenCode or contacting the provider:
 
 ```text

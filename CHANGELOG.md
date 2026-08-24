@@ -8,6 +8,7 @@
 - Add regression coverage for schema detection and strict diagnostics.
 - Document the verified platform, provider, and OpenCode compatibility matrix.
 - Add fake OpenCode integration tests for child-process arguments, environment isolation, and temporary-config cleanup.
+- Keep hosted Windows CI deterministic with a checked-in SQLite shim and smoke checks; the full Windows fixture remains runnable locally.
 
 ## v0.3.0
 
