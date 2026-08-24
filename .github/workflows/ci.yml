@@ -26,15 +26,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - shell: pwsh
+      - name: Verify SQLite shim
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "CCSWITCH_SQLITE=$env:CCSWITCH_SQLITE"
+          if (-not (Test-Path -LiteralPath $env:CCSWITCH_SQLITE)) { throw "SQLite shim not found" }
+          & $env:CCSWITCH_SQLITE -readonly -json -noheader ':memory:' 'SELECT 1 AS value;'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check PowerShell syntax and version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\opencode-ccswitch.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object Message; exit 1 }
-          & .\opencode-ccswitch.ps1 --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\install.ps1 -? | Out-Null
-          & .\tests\windows-integration.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\install.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object Message; exit 1 }
+          & .\opencode-ccswitch.ps1 --version
+      - name: Run Windows integration test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows-integration.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
