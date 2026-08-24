@@ -19,6 +19,8 @@ jobs:
 
   powershell:
     runs-on: windows-latest
+    env:
+      CCSWITCH_SQLITE: ${{ github.workspace }}\tests\sqlite3-shim.cmd
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,7 +28,6 @@ jobs:
           python-version: "3.11"
       - shell: pwsh
         run: |
-          $env:CCSWITCH_SQLITE = (Resolve-Path .\tests\sqlite3-shim.cmd).Path
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\opencode-ccswitch.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object Message; exit 1 }
