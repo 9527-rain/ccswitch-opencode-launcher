@@ -10,14 +10,15 @@ try {
   $schema = "CREATE TABLE providers (id TEXT, name TEXT, settings_config TEXT, meta TEXT, website_url TEXT, app_type TEXT, is_current INTEGER); INSERT INTO providers VALUES ('p1','Windows Test','$settingsSql','$metaSql','https://example.test','opencode',1);"
   $sqlFile = Join-Path $root "fixture.sql"
   [IO.File]::WriteAllText($sqlFile, $schema, [Text.Encoding]::UTF8)
-  & sqlite3.exe $db ".read $sqlFile"
+  $sqliteCommand = if ($env:CCSWITCH_SQLITE) { $env:CCSWITCH_SQLITE } else { (Get-Command sqlite3.exe).Source }
+  & $sqliteCommand $db ".read $sqlFile"
   if ($LASTEXITCODE -ne 0) { throw "sqlite3 fixture setup failed" }
   $oldHome = $env:CCSWITCH_HOME
   $oldDb = $env:CCSWITCH_DB
   $oldSqlite = $env:CCSWITCH_SQLITE
   $env:CCSWITCH_HOME = $root
   $env:CCSWITCH_DB = $db
-  $env:CCSWITCH_SQLITE = (Get-Command sqlite3.exe).Source
+  $env:CCSWITCH_SQLITE = $sqliteCommand
   try {
     $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") --dry-run 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw $output }
@@ -44,7 +45,7 @@ try {
   $env:PATH = "$root;$oldPath"
   $env:CCSWITCH_HOME = $root
   $env:CCSWITCH_DB = $db
-  $env:CCSWITCH_SQLITE = (Get-Command sqlite3.exe).Source
+  $env:CCSWITCH_SQLITE = $sqliteCommand
   try {
     $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\opencode-ccswitch.ps1") 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw $output }

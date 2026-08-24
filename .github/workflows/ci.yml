@@ -21,15 +21,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - shell: pwsh
         run: |
-          $sqliteZip = Join-Path $env:RUNNER_TEMP 'sqlite-tools.zip'
-          $sqliteDir = Join-Path $env:RUNNER_TEMP 'sqlite-tools'
-          Invoke-WebRequest -UseBasicParsing -Uri 'https://www.sqlite.org/2025/sqlite-tools-win-x64-3500100.zip' -OutFile $sqliteZip
-          Expand-Archive -LiteralPath $sqliteZip -DestinationPath $sqliteDir -Force
-          $env:PATH = "$sqliteDir;$env:PATH"
-          $env:CCSWITCH_SQLITE = (Get-ChildItem -LiteralPath $sqliteDir -Filter sqlite3.exe -Recurse | Select-Object -First 1).FullName
-          if (-not $env:CCSWITCH_SQLITE) { throw 'sqlite3.exe was not found in the SQLite tools archive' }
+          $env:CCSWITCH_SQLITE = Join-Path $env:RUNNER_TEMP 'sqlite3.cmd'
+          $shim = (Resolve-Path .\tests\sqlite3-shim.py).Path
+          $shimCommand = "@echo off`r`npython `"$shim`" %*`r`n"
+          Set-Content -LiteralPath $env:CCSWITCH_SQLITE -Value $shimCommand -Encoding ASCII
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\opencode-ccswitch.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object Message; exit 1 }
