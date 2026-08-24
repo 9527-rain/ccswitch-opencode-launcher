@@ -26,10 +26,7 @@ jobs:
           python-version: "3.11"
       - shell: pwsh
         run: |
-          $env:CCSWITCH_SQLITE = Join-Path $env:RUNNER_TEMP 'sqlite3.cmd'
-          $shim = (Resolve-Path .\tests\sqlite3-shim.py).Path
-          $shimCommand = "@echo off`r`npython `"$shim`" %*`r`n"
-          Set-Content -LiteralPath $env:CCSWITCH_SQLITE -Value $shimCommand -Encoding ASCII
+          $env:CCSWITCH_SQLITE = (Resolve-Path .\tests\sqlite3-shim.cmd).Path
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\opencode-ccswitch.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object Message; exit 1 }
