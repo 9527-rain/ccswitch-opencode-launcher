@@ -6,7 +6,11 @@ INSTALL_DIR=${OPENCODE_CCSWITCH_INSTALL_DIR:-${XDG_BIN_HOME:-"$HOME/.local/bin"}
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SOURCE_DIR=
 TMP_DIR=
-cleanup() { [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"; }
+cleanup() {
+  if [ -n "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
 trap cleanup EXIT
 
 ACTION=install
